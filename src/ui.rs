@@ -20,6 +20,14 @@ pub fn ui(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
+    draw_title(frame, chunks[0]);
+    draw_field(frame, chunks[1], app);
+    draw_main(frame, chunks[2], app);
+    draw_footer(frame, chunks[3], app);
+    draw_popup(frame, app);
+}
+
+fn draw_title(frame: &mut Frame, rect: Rect) {
     let title_block = Block::default()
         .title("Terminal JRPG")
         .borders(Borders::ALL)
@@ -31,12 +39,16 @@ pub fn ui(frame: &mut Frame, app: &App) {
     ))
     .block(title_block);
 
-    frame.render_widget(title, chunks[0]);
+    frame.render_widget(title, rect);
+}
 
+fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {}
+
+fn draw_main(frame: &mut Frame, rect: Rect, app: &App) {
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(20), Constraint::Fill(1)])
-        .split(chunks[2]);
+        .split(rect);
 
     let action_block = Block::default()
         .title("Actions ↓↑")
@@ -124,7 +136,9 @@ pub fn ui(frame: &mut Frame, app: &App) {
                 character_chunks[chunk],
             )
         });
+}
 
+fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
     let current_navigation_text = vec![
         // The first half of the text
         match app.current_screen {
@@ -165,11 +179,13 @@ pub fn ui(frame: &mut Frame, app: &App) {
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[3]);
+        .split(rect);
 
     frame.render_widget(mode_footer, footer_chunks[0]);
     frame.render_widget(key_notes_footer, footer_chunks[1]);
+}
 
+fn draw_popup(frame: &mut Frame, app: &App) {
     if let CurrentScreen::Exiting = app.current_screen {
         let popup_block = Block::default().title("Really quit?").borders(Borders::ALL);
 

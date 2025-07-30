@@ -12,11 +12,29 @@ Characters also have a basic attack (or action) that can be used when out of res
 Skills should almost always do more than one thing. I.e. skills don't only deal damage but also add a status effect and/or drain or generate some resource. The additional effect or damage multiplier can be conditioned on some status effect existing on the target, which means players need to think about in which order to play their available skills. Damage can also come in different elemental forms which enemies will be either strong or weak to.
 
 ### Damage types
-Melee, ranged
-Physical, fire, ice, electrical, toxic, light, dark
+
+#### Distance
+- Melee
+- Ranged
+
+#### Elements
+- Physical
+- Fire
+- Ice
+- Electrical
+- Toxic
+- Light
+- Dark
 
 ### Status effects
-Haste, slow, burn, freeze, poison, zapped, confused, stunned
+- Haste
+- Slow
+- Burn
+- Freeze
+- Poisoned
+- Zapped
+- Confused
+- Stunned
 
 ## Items and equipment
 No wearables; instead characters have a number of character mod slots an a smaller number of weapon mod slots which lets players align the characters more to their prefered play style.

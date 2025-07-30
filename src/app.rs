@@ -62,6 +62,8 @@ pub enum Job {
 // Status
 #[derive(Default)]
 pub struct Party;
+#[derive(Default)]
+pub struct Hostile;
 pub struct Target;
 pub struct Burning(pub u8);
 pub struct Frozen;
@@ -98,6 +100,7 @@ struct NPCBundle {
     level: Level,
     xp: Xp,
     stats: Stats,
+    hostile: Hostile,
 }
 
 const LEVEL_THRESHOLDS: [u32; 10] = [0, 100, 300, 600, 1000, 1500, 2100, 2800, 3600, 4500];
@@ -144,6 +147,14 @@ impl App {
             ..Default::default()
         });
 
+        world.spawn(NPCBundle {
+            name: Name("Sewer Rat".into()),
+            ..Default::default()
+        });
+        world.spawn(NPCBundle {
+            name: Name("Cybermutant".into()),
+            ..Default::default()
+        });
         world.spawn(NPCBundle {
             name: Name("Sewer Rat".into()),
             ..Default::default()
