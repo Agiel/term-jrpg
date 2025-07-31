@@ -1,13 +1,15 @@
 use hecs::With;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Gauge, List, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, List, Paragraph, Wrap},
 };
 
-use crate::app::{App, CurrentScreen, Health, Job, Name, Party, Stats};
+use crate::app::{
+    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, Name, Party, Stats,
+};
 
 pub fn ui(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -42,7 +44,72 @@ fn draw_title(frame: &mut Frame, rect: Rect) {
     frame.render_widget(title, rect);
 }
 
-fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {}
+fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {
+    match app.game_state {
+        GameState::Combat => draw_enemies(frame, rect, app),
+        _ => unimplemented!(),
+    }
+}
+
+struct EnemyInfo {
+    name: String,
+    health: u32,
+    max_health: u32,
+    status: String,
+}
+
+fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
+    let enemy_info = app
+        .world
+        .query::<With<(&Name, &Health, &Stats), &Hostile>>()
+        .iter()
+        .map(|(entity, (Name(name), Health(health), stats))| {
+            let mut status = String::new();
+            if let Ok(burning) = app.world.get::<&Burning>(entity) {
+                status += &format!("🔥{}", burning.0);
+            }
+            EnemyInfo {
+                name: name.clone(),
+                health: *health,
+                max_health: stats.max_health,
+                status,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let centered = Layout::vertical(vec![Constraint::Length(4)])
+        .flex(Flex::Center)
+        .split(rect);
+    let enemy_chunks = Layout::horizontal(vec![Constraint::Length(20); enemy_info.len()])
+        .flex(Flex::Center)
+        .split(centered[0]);
+
+    enemy_info.iter().enumerate().for_each(|(i, info)| {
+        frame.render_widget(
+            Block::default()
+                .title(info.name.as_str())
+                .borders(Borders::ALL),
+            enemy_chunks[i],
+        );
+        let info_chunks = Layout::vertical(vec![Constraint::Length(1), Constraint::Fill(1)])
+            .margin(1)
+            .split(enemy_chunks[i]);
+        let mut chunk = 0;
+        frame.render_widget(
+            Gauge::default()
+                .ratio(info.health as f64 / info.max_health as f64)
+                .label(format!("{}/{}", info.health, info.max_health))
+                .gauge_style(Color::Red),
+            info_chunks[chunk],
+        );
+
+        chunk += 1;
+        frame.render_widget(
+            Paragraph::new(Text::raw(info.status.as_str())),
+            info_chunks[chunk],
+        );
+    });
+}
 
 fn draw_main(frame: &mut Frame, rect: Rect, app: &App) {
     let main_chunks = Layout::default()
@@ -199,6 +266,7 @@ fn draw_popup(frame: &mut Frame, app: &App) {
             .wrap(Wrap { trim: false });
 
         let area = centered_rect(60, 25, frame.area());
+        frame.render_widget(Clear, area);
         frame.render_widget(exit_paragraph, area);
     }
 }

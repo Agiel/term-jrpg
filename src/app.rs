@@ -2,14 +2,21 @@ use hecs::{Entity, World};
 use hecs_macros::Bundle;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+pub enum GameState {
+    Menu,
+    Overworld,
+    Combat,
+}
+
 pub enum CurrentScreen {
     Main,
-    Target,
     Skill,
+    Target,
     Exiting,
 }
 
 pub struct App {
+    pub game_state: GameState,
     pub current_screen: CurrentScreen,
     pub world: World,
     pub turn: Option<Entity>,
@@ -155,14 +162,17 @@ impl App {
             name: Name("Cybermutant".into()),
             ..Default::default()
         });
-        world.spawn(NPCBundle {
+        let rat = world.spawn(NPCBundle {
             name: Name("Sewer Rat".into()),
             ..Default::default()
         });
 
+        let _ = world.insert_one(rat, Burning(6));
+
         level_up(&mut world);
 
         App {
+            game_state: GameState::Combat,
             current_screen: CurrentScreen::Main,
             world,
             turn: Some(turn),
