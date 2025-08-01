@@ -1,3 +1,5 @@
+use std::collections::BinaryHeap;
+
 use hecs::With;
 use ratatui::{
     Frame,
@@ -8,7 +10,7 @@ use ratatui::{
 };
 
 use crate::app::{
-    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, Name, Party, Stats,
+    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, Level, Name, Order, Party, Stats,
 };
 
 pub fn ui(frame: &mut Frame, app: &App) {
@@ -46,13 +48,28 @@ fn draw_title(frame: &mut Frame, rect: Rect) {
 
 fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {
     match app.game_state {
-        GameState::Combat => draw_enemies(frame, rect, app),
+        GameState::Combat => {
+            let combat_chunks = Layout::horizontal(vec![
+                Constraint::Length(20),
+                Constraint::Fill(1),
+                Constraint::Length(20),
+            ])
+            .split(rect);
+            draw_log(frame, combat_chunks[0], app);
+            draw_enemies(frame, combat_chunks[1], app);
+            draw_order(frame, combat_chunks[2], app);
+        }
         _ => unimplemented!(),
     }
 }
 
+fn draw_log(frame: &mut Frame, rect: Rect, app: &App) {
+    frame.render_widget(Block::default().title("Log").borders(Borders::ALL), rect);
+}
+
 struct EnemyInfo {
     name: String,
+    level: u8,
     health: u32,
     max_health: u32,
     status: String,
@@ -61,20 +78,23 @@ struct EnemyInfo {
 fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
     let enemy_info = app
         .world
-        .query::<With<(&Name, &Health, &Stats), &Hostile>>()
+        .query::<With<(&Name, &Level, &Health, &Stats), &Hostile>>()
         .iter()
-        .map(|(entity, (Name(name), Health(health), stats))| {
-            let mut status = String::new();
-            if let Ok(burning) = app.world.get::<&Burning>(entity) {
-                status += &format!("🔥{}", burning.0);
-            }
-            EnemyInfo {
-                name: name.clone(),
-                health: *health,
-                max_health: stats.max_health,
-                status,
-            }
-        })
+        .map(
+            |(entity, (Name(name), Level(level), Health(health), stats))| {
+                let mut status = String::new();
+                if let Ok(burning) = app.world.get::<&Burning>(entity) {
+                    status += &format!("🔥{}", burning.0);
+                }
+                EnemyInfo {
+                    name: name.clone(),
+                    level: *level,
+                    health: *health,
+                    max_health: stats.max_health,
+                    status,
+                }
+            },
+        )
         .collect::<Vec<_>>();
 
     let centered = Layout::vertical(vec![Constraint::Length(4)])
@@ -87,7 +107,7 @@ fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
     enemy_info.iter().enumerate().for_each(|(i, info)| {
         frame.render_widget(
             Block::default()
-                .title(info.name.as_str())
+                .title(format!("{} Lv.{}", info.name, info.level))
                 .borders(Borders::ALL),
             enemy_chunks[i],
         );
@@ -109,6 +129,57 @@ fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
             info_chunks[chunk],
         );
     });
+}
+
+#[derive(PartialEq, PartialOrd, Eq, Ord)]
+struct OrderInfo {
+    order: Order,
+    name: String,
+}
+struct NextUp(BinaryHeap<OrderInfo>);
+impl Iterator for NextUp {
+    type Item = OrderInfo;
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.0.pop();
+        if let Some(i) = &item {
+            self.0.push(OrderInfo {
+                order: Order {
+                    turn: i.order.turn + 1,
+                    ..i.order
+                },
+                name: i.name.clone(),
+            });
+        }
+        item
+    }
+}
+
+fn draw_order(frame: &mut Frame, rect: Rect, app: &App) {
+    let next_up = NextUp(BinaryHeap::from_iter(
+        app.world
+            .query::<(&Order, &Name)>()
+            .iter()
+            .map(|(_, (order, Name(name)))| OrderInfo {
+                name: name.clone(),
+                order: *order,
+            }),
+    ));
+    frame.render_widget(
+        Paragraph::new(Text::from(
+            next_up
+                .take(rect.height as usize - 2)
+                .map(|i| {
+                    if i.order.friendly {
+                        Line::raw(i.name).left_aligned().style(Color::Green)
+                    } else {
+                        Line::raw(i.name).right_aligned().style(Color::LightRed)
+                    }
+                })
+                .collect::<Vec<_>>(),
+        ))
+        .block(Block::default().title("Next up").borders(Borders::ALL)),
+        rect,
+    );
 }
 
 fn draw_main(frame: &mut Frame, rect: Rect, app: &App) {

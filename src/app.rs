@@ -1,4 +1,6 @@
-use hecs::{Entity, World};
+use std::cmp::Ordering;
+
+use hecs::{Entity, With, World};
 use hecs_macros::Bundle;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -36,7 +38,7 @@ pub struct Health(pub u32);
 #[derive(Default)]
 pub struct Stats {
     pub max_health: u32,
-    pub speed: u8,
+    pub speed: u32,
     pub crit: f32,
     pub evade: f32,
     pub defense: f32,
@@ -77,6 +79,53 @@ pub struct Frozen;
 pub struct Confused;
 pub struct Blind;
 pub struct Stunned;
+
+#[derive(Clone, Copy)]
+pub struct Order {
+    pub turn: u8,
+    pub speed: u32,
+    pub offset: f32,
+    pub friendly: bool,
+}
+
+impl PartialEq for Order {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(self.cmp(other), Ordering::Equal)
+    }
+}
+
+impl Eq for Order {}
+
+impl Ord for Order {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let a = self.turn as f32 / self.speed as f32 + self.offset;
+        let b = other.turn as f32 / other.speed as f32 + other.offset;
+        let res = b.partial_cmp(&a); // Order flipped because binary_heap is a max heap
+        if matches!(res, None) || matches!(res, Some(Ordering::Equal)) {
+            if self.friendly == other.friendly {
+                Ordering::Equal
+            } else if self.friendly {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        } else {
+            res.unwrap()
+        }
+    }
+}
+
+impl PartialOrd for Order {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+enum TurnPriority {
+    Friendly,
+    Enemy,
+    Neutral,
+}
 
 pub enum Message {
     Up,
@@ -119,9 +168,47 @@ fn level_up(world: &mut World) {
         if xp >= LEVEL_THRESHOLDS[*level as usize] {
             *level += 1;
             stats.max_health = 20 + 10 * *level as u32;
+            stats.speed = 100 + 20 * *level as u32;
             *health = stats.max_health;
         }
     }
+}
+
+fn start_combat(priority: TurnPriority, world: &mut World) {
+    let mut to_insert = Vec::new();
+    for (entity, stats) in world.query::<With<&Stats, &Party>>().iter() {
+        to_insert.push((
+            entity,
+            Order {
+                speed: stats.speed,
+                offset: 0.,
+                turn: if matches!(priority, TurnPriority::Enemy) {
+                    2
+                } else {
+                    1
+                },
+                friendly: true,
+            },
+        ))
+    }
+    for (entity, stats) in world.query::<With<&Stats, &Hostile>>().iter() {
+        to_insert.push((
+            entity,
+            Order {
+                speed: stats.speed,
+                offset: 0.,
+                turn: if matches!(priority, TurnPriority::Friendly) {
+                    2
+                } else {
+                    1
+                },
+                friendly: false,
+            },
+        ))
+    }
+    to_insert.into_iter().for_each(|(entity, order)| {
+        world.insert_one(entity, order).unwrap();
+    });
 }
 
 impl App {
@@ -170,6 +257,8 @@ impl App {
         let _ = world.insert_one(rat, Burning(6));
 
         level_up(&mut world);
+
+        start_combat(TurnPriority::Neutral, &mut world);
 
         App {
             game_state: GameState::Combat,
