@@ -1,4 +1,7 @@
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    collections::{BTreeSet, BinaryHeap},
+};
 
 use hecs::{Entity, With, World};
 use hecs_macros::Bundle;
@@ -22,6 +25,7 @@ pub struct App {
     pub current_screen: CurrentScreen,
     pub world: World,
     pub turn: Option<Entity>,
+    pub next_up: Option<NextUp>,
 }
 
 // Basic
@@ -59,7 +63,7 @@ pub enum Job {
     Technopriest {
         prayers: u8,
     },
-    Oracle {
+    Clairvoyant {
         sun: u8,
         moon: u8,
     },
@@ -68,60 +72,76 @@ pub enum Job {
     },
 }
 
-// Status
+// Misc
 #[derive(Default)]
 pub struct Party;
 #[derive(Default)]
 pub struct Hostile;
 pub struct Target;
+#[derive(Default)]
+pub struct Initiative(pub f32);
+
+// Status
 pub struct Burning(pub u8);
 pub struct Frozen;
 pub struct Confused;
 pub struct Blind;
 pub struct Stunned;
 
-#[derive(Clone, Copy)]
-pub struct Order {
-    pub turn: u8,
+#[derive(Clone, PartialEq)]
+pub struct InitiativeInfo {
+    pub initiative: f32,
     pub speed: u32,
-    pub offset: f32,
-    pub friendly: bool,
+    pub hostile: bool,
+    pub entity: Entity,
 }
 
-impl PartialEq for Order {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(self.cmp(other), Ordering::Equal)
-    }
-}
+impl Eq for InitiativeInfo {}
 
-impl Eq for Order {}
-
-impl Ord for Order {
+impl Ord for InitiativeInfo {
     fn cmp(&self, other: &Self) -> Ordering {
-        let a = self.turn as f32 / self.speed as f32 + self.offset;
-        let b = other.turn as f32 / other.speed as f32 + other.offset;
-        let res = b.partial_cmp(&a); // Order flipped because binary_heap is a max heap
-        if matches!(res, None) || matches!(res, Some(Ordering::Equal)) {
-            if self.friendly == other.friendly {
-                Ordering::Equal
-            } else if self.friendly {
-                Ordering::Greater
-            } else {
+        let res = other
+            .initiative
+            .partial_cmp(&self.initiative)
+            .unwrap_or(Ordering::Equal); // Reversed because BinaryHeap is a max heap
+        if matches!(res, Ordering::Equal) {
+            if self.hostile == other.hostile {
+                other.entity.cmp(&self.entity)
+            } else if self.hostile {
                 Ordering::Less
+            } else {
+                Ordering::Greater
             }
         } else {
-            res.unwrap()
+            res
         }
     }
 }
 
-impl PartialOrd for Order {
+impl PartialOrd for InitiativeInfo {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-enum TurnPriority {
+#[derive(Clone)]
+pub struct NextUp(pub BinaryHeap<InitiativeInfo>);
+
+impl Iterator for NextUp {
+    type Item = InitiativeInfo;
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.0.pop();
+        if let Some(i) = &item {
+            self.0.push(InitiativeInfo {
+                initiative: i.initiative + 1. / i.speed as f32,
+                ..*i
+            });
+        }
+        item
+    }
+}
+
+pub enum Advantage {
     Friendly,
     Enemy,
     Neutral,
@@ -146,6 +166,7 @@ struct CharacterBundle {
     level: Level,
     xp: Xp,
     stats: Stats,
+    initiative: Initiative,
     party: Party,
 }
 
@@ -156,6 +177,7 @@ struct NPCBundle {
     level: Level,
     xp: Xp,
     stats: Stats,
+    initiative: Initiative,
     hostile: Hostile,
 }
 
@@ -174,43 +196,6 @@ fn level_up(world: &mut World) {
     }
 }
 
-fn start_combat(priority: TurnPriority, world: &mut World) {
-    let mut to_insert = Vec::new();
-    for (entity, stats) in world.query::<With<&Stats, &Party>>().iter() {
-        to_insert.push((
-            entity,
-            Order {
-                speed: stats.speed,
-                offset: 0.,
-                turn: if matches!(priority, TurnPriority::Enemy) {
-                    2
-                } else {
-                    1
-                },
-                friendly: true,
-            },
-        ))
-    }
-    for (entity, stats) in world.query::<With<&Stats, &Hostile>>().iter() {
-        to_insert.push((
-            entity,
-            Order {
-                speed: stats.speed,
-                offset: 0.,
-                turn: if matches!(priority, TurnPriority::Friendly) {
-                    2
-                } else {
-                    1
-                },
-                friendly: false,
-            },
-        ))
-    }
-    to_insert.into_iter().for_each(|(entity, order)| {
-        world.insert_one(entity, order).unwrap();
-    });
-}
-
 impl App {
     pub fn new() -> App {
         let mut world = World::new();
@@ -225,14 +210,14 @@ impl App {
         //     job: Job::Netrunner { ram: 16, heat: 54 },
         //     ..Default::default()
         // });
-        let turn = world.spawn(CharacterBundle {
+        world.spawn(CharacterBundle {
             name: Name("Technopriest".into()),
             job: Job::Technopriest { prayers: 4 },
             ..Default::default()
         });
         world.spawn(CharacterBundle {
-            name: Name("Oracle".into()),
-            job: Job::Oracle { sun: 0, moon: 0 },
+            name: Name("Clairvoyant".into()),
+            job: Job::Clairvoyant { sun: 0, moon: 0 },
             ..Default::default()
         });
         world.spawn(CharacterBundle {
@@ -258,13 +243,12 @@ impl App {
 
         level_up(&mut world);
 
-        start_combat(TurnPriority::Neutral, &mut world);
-
         App {
             game_state: GameState::Combat,
             current_screen: CurrentScreen::Main,
             world,
-            turn: Some(turn),
+            turn: None,
+            next_up: None,
         }
     }
 
@@ -295,5 +279,39 @@ impl App {
             },
             _ => None,
         }
+    }
+    pub fn start_combat(&mut self, advantage: Advantage) {
+        for (_, (stats, Initiative(initiative), hostile)) in
+            self.world
+                .query_mut::<(&Stats, &mut Initiative, Option<&Hostile>)>()
+        {
+            *initiative = 1. / stats.speed as f32;
+            if matches!(advantage, Advantage::Friendly) && hostile.is_some()
+                || matches!(advantage, Advantage::Enemy) && hostile.is_none()
+            {
+                *initiative *= 2.;
+            }
+        }
+        self.refresh_next_up();
+        self.turn = self
+            .next_up
+            .as_ref()
+            .and_then(|nu| nu.0.peek().and_then(|i| Some(i.entity)));
+    }
+
+    fn refresh_next_up(&mut self) {
+        self.next_up = Some(NextUp(BinaryHeap::from_iter(
+            self.world
+                .query::<(&Initiative, &Stats, Option<&Hostile>)>()
+                .iter()
+                .map(
+                    |(entity, (&Initiative(initiative), stats, hostile))| InitiativeInfo {
+                        initiative,
+                        speed: stats.speed,
+                        hostile: hostile.is_some(),
+                        entity,
+                    },
+                ),
+        )));
     }
 }

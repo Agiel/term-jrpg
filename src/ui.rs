@@ -1,4 +1,4 @@
-use std::collections::BinaryHeap;
+use std::{cmp::Ordering, collections::BinaryHeap, u32};
 
 use hecs::With;
 use ratatui::{
@@ -10,7 +10,8 @@ use ratatui::{
 };
 
 use crate::app::{
-    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, Level, Name, Order, Party, Stats,
+    App, Burning, CurrentScreen, GameState, Health, Hostile, Initiative, InitiativeInfo, Job,
+    Level, Name, NextUp, Party, Stats,
 };
 
 pub fn ui(frame: &mut Frame, app: &App) {
@@ -50,7 +51,7 @@ fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {
     match app.game_state {
         GameState::Combat => {
             let combat_chunks = Layout::horizontal(vec![
-                Constraint::Length(20),
+                Constraint::Length(32),
                 Constraint::Fill(1),
                 Constraint::Length(20),
             ])
@@ -131,48 +132,20 @@ fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
     });
 }
 
-#[derive(PartialEq, PartialOrd, Eq, Ord)]
-struct OrderInfo {
-    order: Order,
-    name: String,
-}
-struct NextUp(BinaryHeap<OrderInfo>);
-impl Iterator for NextUp {
-    type Item = OrderInfo;
-    fn next(&mut self) -> Option<Self::Item> {
-        let item = self.0.pop();
-        if let Some(i) = &item {
-            self.0.push(OrderInfo {
-                order: Order {
-                    turn: i.order.turn + 1,
-                    ..i.order
-                },
-                name: i.name.clone(),
-            });
-        }
-        item
-    }
-}
-
 fn draw_order(frame: &mut Frame, rect: Rect, app: &App) {
-    let next_up = NextUp(BinaryHeap::from_iter(
-        app.world
-            .query::<(&Order, &Name)>()
-            .iter()
-            .map(|(_, (order, Name(name)))| OrderInfo {
-                name: name.clone(),
-                order: *order,
-            }),
-    ));
+    let Some(next_up) = app.next_up.clone() else {
+        return;
+    };
     frame.render_widget(
         Paragraph::new(Text::from(
             next_up
                 .take(rect.height as usize - 2)
                 .map(|i| {
-                    if i.order.friendly {
-                        Line::raw(i.name).left_aligned().style(Color::Green)
+                    let name = app.world.get::<&Name>(i.entity).unwrap().0.clone();
+                    if i.hostile {
+                        Line::raw(name).right_aligned().style(Color::LightRed)
                     } else {
-                        Line::raw(i.name).right_aligned().style(Color::LightRed)
+                        Line::raw(name).left_aligned().style(Color::Green)
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -261,7 +234,7 @@ fn draw_main(frame: &mut Frame, rect: Rect, app: &App) {
                     Job::Technopriest { prayers } => {
                         Line::styled(format!("✠ {}", prayers), Color::LightMagenta)
                     }
-                    Job::Oracle { sun, moon } => Line::from(vec![
+                    Job::Clairvoyant { sun, moon } => Line::from(vec![
                         Span::styled(format!("☀ {}", sun), Color::Yellow),
                         Span::styled(format!("  ☽︎ {}", moon), Color::Magenta),
                     ]),

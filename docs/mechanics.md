@@ -41,3 +41,7 @@ No wearables; instead characters have a number of character mod slots an a small
 
 ## Map generation
 Procedurally generated maps with a few different biomes such as street, sewers, megabuilding.
+
+## Speed
+The character with lowest initiative goes first.
+Initiative = turn / speed + offset

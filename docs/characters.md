@@ -14,10 +14,10 @@ DoTs and CC. RAM is used up while enemy is affected by status effect. Tradeoff b
 
 Main tank, paladin. Build up prayers by taking hits or using melee attacks. Skills consume prayers.
 
-## Oracle
+## Clairvoyant
 **Resources:** Sun, Moon
 
-Tarot themed. Keep sun and moon charges balanced for increased crit damage.
+Tarot themed. Keep sun and moon charges balanced for increased crit damage. Skills that delay enemy turns or let teammates play immediately.
 
 ## Nanovampire
 **Resources:** Nanobots (battery)
