@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BinaryHeap, u32};
+use std::u32;
 
 use hecs::With;
 use ratatui::{
@@ -6,12 +6,11 @@ use ratatui::{
     layout::{Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Gauge, List, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Gauge, List, Paragraph, Row, Table, Wrap},
 };
 
 use crate::app::{
-    App, Burning, CurrentScreen, GameState, Health, Hostile, Initiative, InitiativeInfo, Job,
-    Level, Name, NextUp, Party, Stats,
+    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, Level, Name, Party, Stats,
 };
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
@@ -69,7 +68,7 @@ fn draw_log(frame: &mut Frame, rect: Rect, app: &App) {
 }
 
 struct EnemyInfo {
-    name: String,
+    name: &'static str,
     level: u8,
     health: u32,
     max_health: u32,
@@ -82,15 +81,15 @@ fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
         .query::<With<(&Name, &Level, &Health, &Stats), &Hostile>>()
         .iter()
         .map(
-            |(entity, (Name(name), Level(level), Health(health), stats))| {
+            |(entity, (&Name(name), &Level(level), &Health(health), stats))| {
                 let mut status = String::new();
                 if let Ok(burning) = app.world.get::<&Burning>(entity) {
                     status += &format!("🔥{}", burning.0);
                 }
                 EnemyInfo {
-                    name: name.clone(),
-                    level: *level,
-                    health: *health,
+                    name,
+                    level,
+                    health,
                     max_health: stats.max_health,
                     status,
                 }
@@ -141,7 +140,7 @@ fn draw_order(frame: &mut Frame, rect: Rect, app: &App) {
             next_up
                 .take(rect.height as usize - 2)
                 .map(|i| {
-                    let name = app.world.get::<&Name>(i.entity).unwrap().0.clone();
+                    let name = app.world.get::<&Name>(i.entity).unwrap().0;
                     if i.hostile {
                         Line::raw(name).right_aligned().style(Color::LightRed)
                     } else {
@@ -161,6 +160,17 @@ fn draw_main(frame: &mut Frame, rect: Rect, app: &mut App) {
         .constraints([Constraint::Length(20), Constraint::Fill(1)])
         .split(rect);
 
+    draw_actions(frame, main_chunks[0], app);
+    draw_party(frame, main_chunks[1], app);
+
+    match app.current_screen {
+        CurrentScreen::Skill => draw_skills(frame, rect, app),
+        CurrentScreen::Item => draw_items(frame, rect, app),
+        _ => (),
+    }
+}
+
+fn draw_actions(frame: &mut Frame, rect: Rect, app: &mut App) {
     let action_block = Block::default()
         .title("Actions ↓↑")
         .borders(Borders::ALL)
@@ -176,84 +186,135 @@ fn draw_main(frame: &mut Frame, rect: Rect, app: &mut App) {
         .highlight_style(Style::new().reversed())
         .block(action_block);
 
-    frame.render_stateful_widget(action_list, main_chunks[0], &mut app.action_list_state);
+    frame.render_stateful_widget(action_list, rect, &mut app.action_list_state);
+}
 
+fn draw_party(frame: &mut Frame, rect: Rect, app: &App) {
     let party_block = Block::default()
         .title("Party")
         .borders(Borders::ALL)
         .style(Style::default());
 
-    frame.render_widget(party_block, main_chunks[1]);
+    frame.render_widget(party_block, rect);
 
     let party_chunks = Layout::vertical([Constraint::Length(1); 3])
         .vertical_margin(1)
         .horizontal_margin(2)
-        .split(main_chunks[1]);
+        .split(rect);
 
     app.world
         .query::<With<(&Name, &Health, &Stats, &Job), &Party>>()
         .iter()
         .enumerate()
-        .for_each(|(i, (entity, (Name(name), Health(health), stats, job)))| {
-            let character_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Length(16),
-                    Constraint::Length(16),
-                    Constraint::Fill(1),
-                ])
-                .spacing(2)
-                .split(party_chunks[i]);
+        .for_each(
+            |(i, (entity, (&Name(name), &Health(health), stats, job)))| {
+                let character_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Length(1),
+                        Constraint::Length(16),
+                        Constraint::Length(16),
+                        Constraint::Fill(1),
+                    ])
+                    .spacing(2)
+                    .split(party_chunks[i]);
 
-            let mut chunk = 0;
-            if let Some(ent) = app.turn
-                && ent == entity
-            {
-                frame.render_widget(Paragraph::new("⮞"), character_chunks[chunk]);
-            }
+                let mut chunk = 0;
+                if let Some(ent) = app.turn
+                    && ent == entity
+                {
+                    frame.render_widget(Paragraph::new("⮞"), character_chunks[chunk]);
+                }
 
-            chunk += 1;
-            frame.render_widget(
-                Paragraph::new(Text::styled(name.as_str(), Color::Gray)).block(Block::default()),
-                character_chunks[chunk],
-            );
+                chunk += 1;
+                frame.render_widget(
+                    Paragraph::new(Text::styled(name, Color::Gray)).block(Block::default()),
+                    character_chunks[chunk],
+                );
 
-            chunk += 1;
-            frame.render_widget(
-                Gauge::default()
-                    .ratio(*health as f64 / stats.max_health as f64)
-                    .label(format!("{}/{}", *health, stats.max_health))
-                    .gauge_style(Color::Red),
-                character_chunks[chunk],
-            );
+                chunk += 1;
+                frame.render_widget(
+                    Gauge::default()
+                        .ratio(health as f64 / stats.max_health as f64)
+                        .label(format!("{}/{}", health, stats.max_health))
+                        .gauge_style(Color::Red),
+                    character_chunks[chunk],
+                );
 
-            chunk += 1;
-            frame.render_widget(
-                Paragraph::new(match job {
-                    Job::Gunslinger { ammo } => {
-                        Line::styled(format!("⁍ {}", ammo), Color::DarkGray)
-                    }
-                    Job::Netrunner { ram, heat } => Line::from(vec![
-                        Span::styled(format!("{}GB", ram), Color::Blue),
-                        Span::styled(format!("  {}ºC", heat), Color::LightRed),
-                    ]),
-                    Job::Technopriest { prayers } => {
-                        Line::styled(format!("✠ {}", prayers), Color::LightMagenta)
-                    }
-                    Job::Clairvoyant { sun, moon } => Line::from(vec![
-                        Span::styled(format!("☀ {}", sun), Color::Yellow),
-                        Span::styled(format!("  ☽︎ {}", moon), Color::Magenta),
-                    ]),
-                    Job::Nanovampire { battery } => {
-                        // TODO: Find less risky character? This one probably won't always fill two cells.
-                        Line::styled(format!("⚡{}%", battery), Color::LightYellow)
-                    }
-                    Job::None => Line::raw(""),
-                }),
-                character_chunks[chunk],
-            )
-        });
+                chunk += 1;
+                frame.render_widget(
+                    Paragraph::new(match job {
+                        Job::Gunslinger { ammo } => {
+                            Line::styled(format!("⁍ {}", ammo), Color::DarkGray)
+                        }
+                        Job::Netrunner { ram, heat } => Line::from(vec![
+                            Span::styled(format!("{}GB", ram), Color::Blue),
+                            Span::styled(format!("  {}ºC", heat), Color::LightRed),
+                        ]),
+                        Job::Technopriest { prayers } => {
+                            Line::styled(format!("✠ {}", prayers), Color::LightMagenta)
+                        }
+                        Job::Clairvoyant { sun, moon } => Line::from(vec![
+                            Span::styled(format!("☀ {}", sun), Color::Yellow),
+                            Span::styled(format!("  ☽︎ {}", moon), Color::Magenta),
+                        ]),
+                        Job::Nanovampire { battery } => {
+                            // TODO: Find less risky character? This one probably won't always fill two cells.
+                            Line::styled(format!("⚡{}%", battery), Color::LightYellow)
+                        }
+                        Job::None => Line::raw(""),
+                    }),
+                    character_chunks[chunk],
+                )
+            },
+        );
+}
+
+fn draw_skills(frame: &mut Frame, rect: Rect, app: &App) {
+    let rect = Layout::horizontal(vec![Constraint::Length(20)])
+        .horizontal_margin(4)
+        .split(
+            Layout::vertical(vec![Constraint::Length(6)])
+                .flex(Flex::End)
+                .vertical_margin(frame.area().height - rect.top() - 1)
+                .split(frame.area())[0],
+        )[0];
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Block::default().title("Skills ↓↑").borders(Borders::ALL),
+        rect,
+    );
+}
+
+fn draw_items(frame: &mut Frame, rect: Rect, app: &mut App) {
+    let rect = Layout::horizontal(vec![Constraint::Length(20)])
+        .horizontal_margin(4)
+        .split(
+            Layout::vertical(vec![Constraint::Length(6)])
+                .flex(Flex::End)
+                .vertical_margin(frame.area().height - rect.top() - 1)
+                .split(frame.area())[0],
+        )[0];
+    frame.render_widget(Clear, rect);
+
+    let widths = vec![Constraint::Fill(1), Constraint::Length(4)];
+    let rows = app
+        .consumables
+        .iter()
+        .map(|i| {
+            Row::new(vec![
+                Cell::from(i.name),
+                Cell::from(Line::from(i.amount.to_string()).right_aligned()),
+            ])
+        })
+        .collect::<Vec<_>>();
+    frame.render_stateful_widget(
+        Table::new(rows, widths)
+            .row_highlight_style(Style::default().reversed())
+            .block(Block::default().title("Items ↓↑").borders(Borders::ALL)),
+        rect,
+        &mut app.consumable_list_state,
+    );
 }
 
 fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {

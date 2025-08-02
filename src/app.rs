@@ -1,13 +1,10 @@
-use std::{
-    cmp::Ordering,
-    collections::{BTreeSet, BinaryHeap},
-};
+use std::{cmp::Ordering, collections::BinaryHeap};
 
-use hecs::{Entity, With, World};
+use hecs::{Entity, World};
 use hecs_macros::Bundle;
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
-    widgets::ListState,
+    widgets::{ListState, TableState},
 };
 
 pub enum GameState {
@@ -25,24 +22,32 @@ pub enum CurrentScreen {
     Exiting,
 }
 
-pub struct ActionListItem<'a> {
-    pub text: &'a str,
+pub struct ActionListItem {
+    pub text: &'static str,
     pub action: CurrentScreen, // TODO: Might need a separate enum but CurrentScreen is good for now
+}
+
+pub struct Consumable {
+    pub name: &'static str,
+    pub amount: u8,
 }
 
 pub struct App {
     pub game_state: GameState,
     pub current_screen: CurrentScreen,
+    pub previous_screen: Vec<CurrentScreen>,
     pub world: World,
+    pub consumables: Vec<Consumable>,
     pub turn: Option<Entity>,
     pub next_up: Option<NextUp>,
-    pub action_list_items: &'static [ActionListItem<'static>],
+    pub action_list_items: &'static [ActionListItem],
     pub action_list_state: ListState,
+    pub consumable_list_state: TableState,
 }
 
 // Basic
 #[derive(Default)]
-pub struct Name(pub String);
+pub struct Name(pub &'static str);
 #[derive(Default)]
 pub struct Xp(pub u32);
 #[derive(Default)]
@@ -214,37 +219,37 @@ impl App {
         let mut world = World::new();
 
         // world.spawn(CharacterBundle {
-        //     name: Name("Gunslinger".into()),
+        //     name: Name("Gunslinger"),
         //     job: Job::Gunslinger { ammo: 12 },
         //     ..Default::default()
         // });
         // world.spawn(CharacterBundle {
-        //     name: Name("Netrunner".into()),
+        //     name: Name("Netrunner"),
         //     job: Job::Netrunner { ram: 16, heat: 54 },
         //     ..Default::default()
         // });
         world.spawn(CharacterBundle {
-            name: Name("Technopriest".into()),
+            name: Name("Technopriest"),
             job: Job::Technopriest { prayers: 4 },
             ..Default::default()
         });
         world.spawn(CharacterBundle {
-            name: Name("Clairvoyant".into()),
+            name: Name("Clairvoyant"),
             job: Job::Clairvoyant { sun: 0, moon: 0 },
             ..Default::default()
         });
         world.spawn(CharacterBundle {
-            name: Name("Nanovampire".into()),
+            name: Name("Nanovampire"),
             job: Job::Nanovampire { battery: 100 },
             ..Default::default()
         });
 
         world.spawn(NPCBundle {
-            name: Name("Sewer Rat".into()),
+            name: Name("Sewer Rat"),
             ..Default::default()
         });
         world.spawn(NPCBundle {
-            name: Name("Cybermutant".into()),
+            name: Name("Cybermutant"),
             ..Default::default()
         });
         let rat = world.spawn(NPCBundle {
@@ -256,14 +261,32 @@ impl App {
 
         level_up(&mut world);
 
+        let consumables = vec![
+            Consumable {
+                name: "Potion",
+                amount: 15,
+            },
+            Consumable {
+                name: "Cleanse",
+                amount: 3,
+            },
+            Consumable {
+                name: "Revive",
+                amount: 3,
+            },
+        ];
+
         App {
             game_state: GameState::Combat,
             current_screen: CurrentScreen::Main,
+            previous_screen: Vec::new(),
             world,
+            consumables,
             turn: None,
             next_up: None,
             action_list_items: &[],
             action_list_state: Default::default(),
+            consumable_list_state: TableState::default().with_selected(0),
         }
     }
 
@@ -286,17 +309,14 @@ impl App {
                 if matches!(self.current_screen, CurrentScreen::Exiting) {
                     return Some(Message::Quit);
                 } else {
+                    self.previous_screen.push(self.current_screen);
                     self.current_screen = CurrentScreen::Exiting;
                     return None;
                 }
             }
-            Message::Cancel => match self.current_screen {
-                CurrentScreen::Exiting => {
-                    self.current_screen = CurrentScreen::Main;
-                    return None;
-                }
-                _ => (),
-            },
+            Message::Cancel => {
+                self.current_screen = self.previous_screen.pop().unwrap_or(CurrentScreen::Main)
+            }
             _ => (),
         }
 
@@ -321,17 +341,34 @@ impl App {
                     }
                     Message::Select => {
                         if let Some(selected) = self.action_list_state.selected() {
+                            self.previous_screen.push(self.current_screen);
                             self.current_screen = self.action_list_items[selected].action;
                         }
                     }
                     _ => (),
                 },
                 CurrentScreen::Skill => match message {
-                    Message::Cancel => self.current_screen = CurrentScreen::Main,
                     _ => (),
                 },
                 CurrentScreen::Item => match message {
-                    Message::Cancel => self.current_screen = CurrentScreen::Main,
+                    Message::Up => {
+                        if self.consumable_list_state.selected() == Some(0) {
+                            self.consumable_list_state.select_last();
+                        } else {
+                            self.consumable_list_state.select_previous();
+                        }
+                    }
+                    Message::Down => {
+                        if self.consumable_list_state.selected() == Some(self.consumables.len() - 1)
+                        {
+                            self.consumable_list_state.select_first();
+                        } else {
+                            self.consumable_list_state.select_next();
+                        }
+                    }
+                    _ => (),
+                },
+                CurrentScreen::Target => match message {
                     _ => (),
                 },
                 _ => (),
