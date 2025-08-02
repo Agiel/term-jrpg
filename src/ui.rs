@@ -4,7 +4,7 @@ use hecs::With;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Flex, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Gauge, List, Paragraph, Wrap},
 };
@@ -14,7 +14,7 @@ use crate::app::{
     Level, Name, NextUp, Party, Stats,
 };
 
-pub fn ui(frame: &mut Frame, app: &App) {
+pub fn ui(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -155,7 +155,7 @@ fn draw_order(frame: &mut Frame, rect: Rect, app: &App) {
     );
 }
 
-fn draw_main(frame: &mut Frame, rect: Rect, app: &App) {
+fn draw_main(frame: &mut Frame, rect: Rect, app: &mut App) {
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(20), Constraint::Fill(1)])
@@ -166,10 +166,17 @@ fn draw_main(frame: &mut Frame, rect: Rect, app: &App) {
         .borders(Borders::ALL)
         .style(Style::default());
 
-    let actions = ["Skill", "Melee", "Item"]; // , "Swap"];
-    let action_list = List::default().items(actions).block(action_block);
+    let items = app
+        .action_list_items
+        .iter()
+        .map(|i| i.text)
+        .collect::<Vec<_>>();
+    let action_list = List::default()
+        .items(items)
+        .highlight_style(Style::new().reversed())
+        .block(action_block);
 
-    frame.render_widget(action_list, main_chunks[0]);
+    frame.render_stateful_widget(action_list, main_chunks[0], &mut app.action_list_state);
 
     let party_block = Block::default()
         .title("Party")
@@ -258,6 +265,7 @@ fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
                 Span::styled("Select Target", Style::default().fg(Color::Green))
             }
             CurrentScreen::Skill => Span::styled("Select Skill", Style::default().fg(Color::Green)),
+            CurrentScreen::Item => Span::styled("Select Item", Style::default().fg(Color::Green)),
             CurrentScreen::Exiting => Span::styled("Exiting", Style::default().fg(Color::LightRed)),
         }
         .to_owned(),
@@ -274,6 +282,10 @@ fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
             ),
             CurrentScreen::Skill => Span::styled(
                 "(esc) to cancel / (↓↑) to select skill",
+                Style::default().fg(Color::Red),
+            ),
+            CurrentScreen::Item => Span::styled(
+                "(esc) to cancel / (↓↑) to select item",
                 Style::default().fg(Color::Red),
             ),
             CurrentScreen::Target => Span::styled(

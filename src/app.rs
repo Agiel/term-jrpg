@@ -5,7 +5,10 @@ use std::{
 
 use hecs::{Entity, With, World};
 use hecs_macros::Bundle;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    crossterm::event::{KeyCode, KeyEvent},
+    widgets::ListState,
+};
 
 pub enum GameState {
     Menu,
@@ -13,11 +16,18 @@ pub enum GameState {
     Combat,
 }
 
+#[derive(Clone, Copy)]
 pub enum CurrentScreen {
     Main,
     Skill,
     Target,
+    Item,
     Exiting,
+}
+
+pub struct ActionListItem<'a> {
+    pub text: &'a str,
+    pub action: CurrentScreen, // TODO: Might need a separate enum but CurrentScreen is good for now
 }
 
 pub struct App {
@@ -26,6 +36,8 @@ pub struct App {
     pub world: World,
     pub turn: Option<Entity>,
     pub next_up: Option<NextUp>,
+    pub action_list_items: &'static [ActionListItem<'static>],
+    pub action_list_state: ListState,
 }
 
 // Basic
@@ -154,6 +166,7 @@ pub enum Message {
     Right,
     Prev,
     Next,
+    Select,
     Cancel,
     Quit,
 }
@@ -249,6 +262,8 @@ impl App {
             world,
             turn: None,
             next_up: None,
+            action_list_items: &[],
+            action_list_state: Default::default(),
         }
     }
 
@@ -256,6 +271,11 @@ impl App {
         match key.code {
             KeyCode::Char('q') => Some(Message::Quit),
             KeyCode::Esc => Some(Message::Cancel),
+            KeyCode::Up => Some(Message::Up),
+            KeyCode::Down => Some(Message::Down),
+            KeyCode::Left => Some(Message::Left),
+            KeyCode::Right => Some(Message::Right),
+            KeyCode::Enter => Some(Message::Select),
             _ => None,
         }
     }
@@ -264,21 +284,61 @@ impl App {
         match message {
             Message::Quit => {
                 if matches!(self.current_screen, CurrentScreen::Exiting) {
-                    Some(Message::Quit)
+                    return Some(Message::Quit);
                 } else {
                     self.current_screen = CurrentScreen::Exiting;
-                    None
+                    return None;
                 }
             }
             Message::Cancel => match self.current_screen {
                 CurrentScreen::Exiting => {
                     self.current_screen = CurrentScreen::Main;
-                    None
+                    return None;
                 }
-                _ => None,
+                _ => (),
             },
-            _ => None,
+            _ => (),
         }
+
+        match self.game_state {
+            GameState::Combat => match self.current_screen {
+                CurrentScreen::Main => match message {
+                    Message::Up => {
+                        if self.action_list_state.selected() == Some(0) {
+                            self.action_list_state.select_last();
+                        } else {
+                            self.action_list_state.select_previous();
+                        }
+                    }
+                    Message::Down => {
+                        if self.action_list_state.selected()
+                            == Some(self.action_list_items.len() - 1)
+                        {
+                            self.action_list_state.select_first();
+                        } else {
+                            self.action_list_state.select_next();
+                        }
+                    }
+                    Message::Select => {
+                        if let Some(selected) = self.action_list_state.selected() {
+                            self.current_screen = self.action_list_items[selected].action;
+                        }
+                    }
+                    _ => (),
+                },
+                CurrentScreen::Skill => match message {
+                    Message::Cancel => self.current_screen = CurrentScreen::Main,
+                    _ => (),
+                },
+                CurrentScreen::Item => match message {
+                    Message::Cancel => self.current_screen = CurrentScreen::Main,
+                    _ => (),
+                },
+                _ => (),
+            },
+            _ => (),
+        }
+        None
     }
     pub fn start_combat(&mut self, advantage: Advantage) {
         for (_, (stats, Initiative(initiative), hostile)) in
@@ -297,6 +357,22 @@ impl App {
             .next_up
             .as_ref()
             .and_then(|nu| nu.0.peek().and_then(|i| Some(i.entity)));
+
+        self.action_list_items = &[
+            ActionListItem {
+                text: "Skill",
+                action: CurrentScreen::Skill,
+            },
+            ActionListItem {
+                text: "Melee",
+                action: CurrentScreen::Target,
+            },
+            ActionListItem {
+                text: "Item",
+                action: CurrentScreen::Item,
+            },
+        ];
+        self.action_list_state.select_first();
     }
 
     fn refresh_next_up(&mut self) {

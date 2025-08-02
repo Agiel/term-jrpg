@@ -21,7 +21,7 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
     let mut app = App::new();
     app.start_combat(app::Advantage::Neutral);
     loop {
-        terminal.draw(|f| ui(f, &app))?;
+        terminal.draw(|f| ui(f, &mut app))?;
         if let Event::Key(key) = event::read()? {
             if key.kind == event::KeyEventKind::Release {
                 continue;
@@ -34,7 +34,7 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
                     return Ok(());
                 }
 
-                terminal.draw(|f| ui(f, &app))?;
+                terminal.draw(|f| ui(f, &mut app))?;
                 message = new_message;
             }
         }
