@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, collections::BinaryHeap, sync::LazyLock};
 
-use hecs::{Entity, World};
+use color_eyre::owo_colors::OwoColorize;
+use hecs::{Entity, With, World};
 use hecs_macros::Bundle;
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
@@ -66,10 +67,11 @@ pub struct Health(pub u32);
 #[derive(Default)]
 pub struct Stats {
     pub max_health: u32,
+    pub attack: u32,
     pub speed: u32,
     pub crit: f32,
     pub evade: f32,
-    pub defense: f32,
+    pub defense: u32,
 }
 
 // Resources
@@ -215,6 +217,7 @@ fn level_up(world: &mut World) {
         if xp >= LEVEL_THRESHOLDS[*level as usize] {
             *level += 1;
             stats.max_health = 20 + 10 * *level as u32;
+            stats.attack = 7 + 3 * *level as u32;
             stats.speed = 100 + 20 * *level as u32;
             *health = stats.max_health;
         }
@@ -404,19 +407,8 @@ impl App {
                         }
                     }
                     Message::Select => {
-                        let Some(skill) = self.skill else {
-                            return None;
-                        };
-                        let caster = self.world.entity(self.turn.unwrap()).unwrap();
-                        let targets = match self.selected_target {
-                            None => &self.targets,
-                            Some(selected) => &vec![self.targets[selected]],
-                        };
-                        targets.iter().for_each(|&target| {
-                            let target = self.world.entity(target).unwrap();
-                            skill.apply(caster, target);
-                        });
-                        self.check_dead();
+                        self.apply_skill();
+                        self.finish_turn();
                     }
                     _ => (),
                 },
@@ -425,6 +417,22 @@ impl App {
             _ => (),
         }
         None
+    }
+
+    fn apply_skill(&mut self) {
+        let Some(skill) = self.skill else {
+            return;
+        };
+        let caster = self.world.entity(self.turn.unwrap()).unwrap();
+        let targets = match self.selected_target {
+            None => &self.targets,
+            Some(selected) => &vec![self.targets[selected]],
+        };
+        targets.iter().for_each(|&target| {
+            let target = self.world.entity(target).unwrap();
+            skill.apply(caster, target);
+        });
+        self.check_dead();
     }
 
     fn check_dead(&mut self) {
@@ -449,6 +457,32 @@ impl App {
             self.selected_target = (self.targets.len() > 0)
                 .then_some(selected.clamp(0, self.targets.len().saturating_sub(1)));
         }
+    }
+
+    fn finish_turn(&mut self) {
+        if self.world.query::<With<(), &Hostile>>().iter().count() == 0 {
+            self.end_combat();
+            return;
+        }
+        {
+            let mut query = self
+                .world
+                .query_one::<(&mut Initiative, &Stats)>(self.turn.unwrap())
+                .unwrap();
+            if let Some((Initiative(initiative), stats)) = query.get() {
+                *initiative += 1. / stats.speed as f32;
+            }
+        }
+        self.refresh_next_up();
+        if let Some(next_up) = &self.next_up {
+            self.turn = next_up.0.peek().map(|i| i.entity);
+        }
+        self.current_screen = CurrentScreen::Main;
+    }
+
+    fn end_combat(&mut self) {
+        self.game_state = GameState::Overworld;
+        self.current_screen = CurrentScreen::Main;
     }
 
     fn start_targeting(&mut self, skill: &'static Skill) {
