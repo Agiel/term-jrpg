@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BinaryHeap};
+use std::{cmp::Ordering, collections::BinaryHeap, sync::LazyLock};
 
 use hecs::{Entity, World};
 use hecs_macros::Bundle;
@@ -6,6 +6,9 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
     widgets::{ListState, TableState},
 };
+use skills::Skill;
+
+mod skills;
 
 pub enum GameState {
     Menu,
@@ -30,6 +33,7 @@ pub struct ActionListItem {
 pub struct Consumable {
     pub name: &'static str,
     pub amount: u8,
+    pub skill: &'static LazyLock<Skill>,
 }
 
 pub struct App {
@@ -43,6 +47,9 @@ pub struct App {
     pub action_list_items: &'static [ActionListItem],
     pub action_list_state: ListState,
     pub consumable_list_state: TableState,
+    pub targets: Vec<Entity>,
+    pub selected_target: Option<usize>,
+    pub skill: Option<&'static Skill>,
 }
 
 // Basic
@@ -66,7 +73,7 @@ pub struct Stats {
 }
 
 // Resources
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub enum Job {
     #[default]
     None,
@@ -94,9 +101,9 @@ pub enum Job {
 pub struct Party;
 #[derive(Default)]
 pub struct Hostile;
-pub struct Target;
 #[derive(Default)]
 pub struct Initiative(pub f32);
+pub struct Dead;
 
 // Status
 pub struct Burning(pub u8);
@@ -265,14 +272,17 @@ impl App {
             Consumable {
                 name: "Potion",
                 amount: 15,
+                skill: &skills::POTION,
             },
             Consumable {
                 name: "Cleanse",
                 amount: 3,
+                skill: &skills::CLEANSE,
             },
             Consumable {
                 name: "Revive",
                 amount: 3,
+                skill: &skills::REVIVE,
             },
         ];
 
@@ -287,6 +297,9 @@ impl App {
             action_list_items: &[],
             action_list_state: Default::default(),
             consumable_list_state: TableState::default().with_selected(0),
+            targets: Vec::new(),
+            selected_target: None,
+            skill: None,
         }
     }
 
@@ -341,8 +354,13 @@ impl App {
                     }
                     Message::Select => {
                         if let Some(selected) = self.action_list_state.selected() {
-                            self.previous_screen.push(self.current_screen);
-                            self.current_screen = self.action_list_items[selected].action;
+                            let next_screen = self.action_list_items[selected].action;
+                            if matches!(next_screen, CurrentScreen::Target) {
+                                self.start_targeting(&skills::BASIC_ATTACK);
+                            } else {
+                                self.previous_screen.push(self.current_screen);
+                                self.current_screen = next_screen;
+                            }
                         }
                     }
                     _ => (),
@@ -366,9 +384,40 @@ impl App {
                             self.consumable_list_state.select_next();
                         }
                     }
+                    Message::Select => {
+                        if let Some(selected) = self.consumable_list_state.selected() {
+                            let skill = self.consumables[selected].skill;
+                            self.start_targeting(skill);
+                        }
+                    }
                     _ => (),
                 },
                 CurrentScreen::Target => match message {
+                    Message::Up | Message::Left => {
+                        if let Some(selected) = &mut self.selected_target {
+                            *selected = (self.targets.len() + *selected - 1) % self.targets.len();
+                        }
+                    }
+                    Message::Down | Message::Right => {
+                        if let Some(selected) = &mut self.selected_target {
+                            *selected = (*selected + 1) % self.targets.len();
+                        }
+                    }
+                    Message::Select => {
+                        let Some(skill) = self.skill else {
+                            return None;
+                        };
+                        let caster = self.world.entity(self.turn.unwrap()).unwrap();
+                        let targets = match self.selected_target {
+                            None => &self.targets,
+                            Some(selected) => &vec![self.targets[selected]],
+                        };
+                        targets.iter().for_each(|&target| {
+                            let target = self.world.entity(target).unwrap();
+                            skill.apply(caster, target);
+                        });
+                        self.check_dead();
+                    }
                     _ => (),
                 },
                 _ => (),
@@ -377,7 +426,45 @@ impl App {
         }
         None
     }
+
+    fn check_dead(&mut self) {
+        let dead = self
+            .world
+            .query::<&Health>()
+            .iter()
+            .filter_map(|(entity, &Health(health))| (health == 0).then_some(entity))
+            .collect::<Vec<_>>();
+        dead.iter().for_each(|&entity| {
+            if self.world.satisfies::<&Party>(entity).unwrap() {
+                self.world.insert_one(entity, Dead).unwrap()
+            } else {
+                self.world.despawn(entity).unwrap();
+            }
+        });
+        self.refresh_next_up();
+        if let Some(skill) = self.skill
+            && let Some(selected) = self.selected_target
+        {
+            self.targets = skill.get_targets(&self.world);
+            self.selected_target = (self.targets.len() > 0)
+                .then_some(selected.clamp(0, self.targets.len().saturating_sub(1)));
+        }
+    }
+
+    fn start_targeting(&mut self, skill: &'static Skill) {
+        self.previous_screen.push(self.current_screen);
+        self.current_screen = CurrentScreen::Target;
+
+        self.targets = skill.get_targets(&self.world);
+        self.selected_target = (!skill.multi_target).then_some(0);
+        self.skill = Some(skill);
+    }
+
     pub fn start_combat(&mut self, advantage: Advantage) {
+        self.game_state = GameState::Combat;
+        self.current_screen = CurrentScreen::Main;
+        self.previous_screen = Vec::new();
+
         for (_, (stats, Initiative(initiative), hostile)) in
             self.world
                 .query_mut::<(&Stats, &mut Initiative, Option<&Hostile>)>()

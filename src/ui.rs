@@ -73,6 +73,7 @@ struct EnemyInfo {
     health: u32,
     max_health: u32,
     status: String,
+    target: bool,
 }
 
 fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
@@ -86,34 +87,50 @@ fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
                 if let Ok(burning) = app.world.get::<&Burning>(entity) {
                     status += &format!("🔥{}", burning.0);
                 }
+
+                let target = if matches!(app.current_screen, CurrentScreen::Target) {
+                    match app.selected_target {
+                        None => app.targets.contains(&entity),
+                        Some(selected) => app.targets[selected] == entity,
+                    }
+                } else {
+                    false
+                };
+
                 EnemyInfo {
                     name,
                     level,
                     health,
                     max_health: stats.max_health,
                     status,
+                    target,
                 }
             },
         )
         .collect::<Vec<_>>();
 
-    let centered = Layout::vertical(vec![Constraint::Length(4)])
-        .flex(Flex::Center)
-        .split(rect);
     let enemy_chunks = Layout::horizontal(vec![Constraint::Length(20); enemy_info.len()])
         .flex(Flex::Center)
-        .split(centered[0]);
+        .split(rect);
 
     enemy_info.iter().enumerate().for_each(|(i, info)| {
+        let centered = Layout::vertical(vec![Constraint::Length(1), Constraint::Length(4)])
+            .flex(Flex::Center)
+            .split(enemy_chunks[i]);
+
+        if info.target {
+            frame.render_widget(Text::raw("⮟").centered(), centered[0]);
+        }
+
         frame.render_widget(
             Block::default()
                 .title(format!("{} Lv.{}", info.name, info.level))
                 .borders(Borders::ALL),
-            enemy_chunks[i],
+            centered[1],
         );
         let info_chunks = Layout::vertical(vec![Constraint::Length(1), Constraint::Fill(1)])
             .margin(1)
-            .split(enemy_chunks[i]);
+            .split(centered[1]);
         let mut chunk = 0;
         frame.render_widget(
             Gauge::default()
@@ -139,13 +156,18 @@ fn draw_order(frame: &mut Frame, rect: Rect, app: &App) {
         Paragraph::new(Text::from(
             next_up
                 .take(rect.height as usize - 2)
-                .map(|i| {
+                .enumerate()
+                .map(|(n, i)| {
                     let name = app.world.get::<&Name>(i.entity).unwrap().0;
-                    if i.hostile {
+                    let mut line = if i.hostile {
                         Line::raw(name).right_aligned().style(Color::LightRed)
                     } else {
                         Line::raw(name).left_aligned().style(Color::Green)
+                    };
+                    if n == 0 {
+                        line = line.bold()
                     }
+                    line
                 })
                 .collect::<Vec<_>>(),
         ))
@@ -220,17 +242,22 @@ fn draw_party(frame: &mut Frame, rect: Rect, app: &App) {
                     .split(party_chunks[i]);
 
                 let mut chunk = 0;
-                if let Some(ent) = app.turn
-                    && ent == entity
+                if matches!(app.current_screen, CurrentScreen::Target)
+                    && let Some(selected) = app.selected_target
+                    && app.targets[selected] == entity
                 {
                     frame.render_widget(Paragraph::new("⮞"), character_chunks[chunk]);
                 }
 
                 chunk += 1;
-                frame.render_widget(
-                    Paragraph::new(Text::styled(name, Color::Gray)).block(Block::default()),
-                    character_chunks[chunk],
-                );
+                let mut name =
+                    Paragraph::new(Text::styled(name, Color::Gray)).block(Block::default());
+                if let Some(ent) = app.turn
+                    && ent == entity
+                {
+                    name = name.bold();
+                }
+                frame.render_widget(name, character_chunks[chunk]);
 
                 chunk += 1;
                 frame.render_widget(
