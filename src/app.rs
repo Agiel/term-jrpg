@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::BinaryHeap, sync::LazyLock};
 
 use color_eyre::owo_colors::OwoColorize;
-use hecs::{Entity, With, World};
+use hecs::{Entity, Satisfies, With, World};
 use hecs_macros::Bundle;
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
@@ -75,7 +75,7 @@ pub struct Stats {
 }
 
 // Resources
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub enum Job {
     #[default]
     None,
@@ -453,7 +453,8 @@ impl App {
         if let Some(skill) = self.skill
             && let Some(selected) = self.selected_target
         {
-            self.targets = skill.get_targets(&self.world);
+            let (targets, _) = skill.get_targets(&self.world);
+            self.targets = targets;
             self.selected_target = (self.targets.len() > 0)
                 .then_some(selected.clamp(0, self.targets.len().saturating_sub(1)));
         }
@@ -489,8 +490,9 @@ impl App {
         self.previous_screen.push(self.current_screen);
         self.current_screen = CurrentScreen::Target;
 
-        self.targets = skill.get_targets(&self.world);
-        self.selected_target = (!skill.multi_target).then_some(0);
+        let (targets, many) = skill.get_targets(&self.world);
+        self.targets = targets;
+        self.selected_target = (!many).then_some(0);
         self.skill = Some(skill);
     }
 
@@ -501,11 +503,11 @@ impl App {
 
         for (_, (stats, Initiative(initiative), hostile)) in
             self.world
-                .query_mut::<(&Stats, &mut Initiative, Option<&Hostile>)>()
+                .query_mut::<(&Stats, &mut Initiative, Satisfies<&Hostile>)>()
         {
             *initiative = 1. / stats.speed as f32;
-            if matches!(advantage, Advantage::Friendly) && hostile.is_some()
-                || matches!(advantage, Advantage::Enemy) && hostile.is_none()
+            if matches!(advantage, Advantage::Friendly) && hostile
+                || matches!(advantage, Advantage::Enemy) && !hostile
             {
                 *initiative *= 2.;
             }
@@ -536,13 +538,13 @@ impl App {
     fn refresh_next_up(&mut self) {
         self.next_up = Some(NextUp(BinaryHeap::from_iter(
             self.world
-                .query::<(&Initiative, &Stats, Option<&Hostile>)>()
+                .query::<(&Initiative, &Stats, Satisfies<&Hostile>)>()
                 .iter()
                 .map(
                     |(entity, (&Initiative(initiative), stats, hostile))| InitiativeInfo {
                         initiative,
                         speed: stats.speed,
-                        hostile: hostile.is_some(),
+                        hostile,
                         entity,
                     },
                 ),
