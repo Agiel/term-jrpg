@@ -1,15 +1,61 @@
-use std::{cmp::Ordering, collections::BinaryHeap, sync::LazyLock};
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, VecDeque},
+    sync::{LazyLock, Mutex},
+};
 
-use color_eyre::owo_colors::OwoColorize;
 use hecs::{Entity, Satisfies, With, World};
 use hecs_macros::Bundle;
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
+    layout::Alignment,
+    style::Style,
     widgets::{ListState, TableState},
 };
 use skills::Skill;
 
 mod skills;
+
+#[derive(Clone)]
+pub struct StyledSpan(pub String, pub Style);
+
+impl StyledSpan {
+    fn new(text: &str) -> Self {
+        Self(text.into(), Style::default())
+    }
+
+    fn styled(text: &str, style: Style) -> Self {
+        Self(text.into(), style)
+    }
+}
+
+#[derive(Clone)]
+pub struct StyledLine(pub Vec<StyledSpan>, pub Alignment);
+
+impl StyledLine {
+    fn new(spans: Vec<StyledSpan>) -> Self {
+        Self(spans, Alignment::Left)
+    }
+
+    fn right_aligned(self) -> Self {
+        Self(self.0, Alignment::Right)
+    }
+}
+
+static LOG: LazyLock<Mutex<VecDeque<StyledLine>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::with_capacity(100)));
+
+pub fn log_write(line: StyledLine) {
+    let mut log = LOG.lock().unwrap();
+    while log.len() >= 100 {
+        log.pop_front();
+    }
+    log.push_back(line);
+}
+
+pub fn get_log() -> Vec<StyledLine> {
+    LOG.lock().unwrap().iter().map(|s| s.clone()).collect()
+}
 
 pub enum GameState {
     Menu,
@@ -64,7 +110,7 @@ pub struct Level(pub u8);
 pub struct Health(pub u32);
 
 // Stats
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Stats {
     pub max_health: u32,
     pub attack: u32,
@@ -216,60 +262,69 @@ fn level_up(world: &mut World) {
     {
         if xp >= LEVEL_THRESHOLDS[*level as usize] {
             *level += 1;
-            stats.max_health = 20 + 10 * *level as u32;
-            stats.attack = 7 + 3 * *level as u32;
+            stats.max_health = 80 + 20 * *level as u32;
+            stats.attack = 16 + 4 * *level as u32;
             stats.speed = 100 + 20 * *level as u32;
+            stats.crit = 0.1 + 0.05 * *level as f32;
             *health = stats.max_health;
         }
     }
+}
+
+fn spawn_party(world: &mut World) {
+    // world.spawn(CharacterBundle {
+    //     name: Name("Gunslinger"),
+    //     job: Job::Gunslinger { ammo: 12 },
+    //     ..Default::default()
+    // });
+    // world.spawn(CharacterBundle {
+    //     name: Name("Netrunner"),
+    //     job: Job::Netrunner { ram: 16, heat: 54 },
+    //     ..Default::default()
+    // });
+    world.spawn(CharacterBundle {
+        name: Name("Technopriest"),
+        job: Job::Technopriest { prayers: 4 },
+        ..Default::default()
+    });
+    world.spawn(CharacterBundle {
+        name: Name("Clairvoyant"),
+        job: Job::Clairvoyant { sun: 0, moon: 0 },
+        ..Default::default()
+    });
+    world.spawn(CharacterBundle {
+        name: Name("Nanovampire"),
+        job: Job::Nanovampire { battery: 100 },
+        ..Default::default()
+    });
+
+    level_up(world);
+}
+
+fn spawn_enemies(world: &mut World) {
+    world.spawn(NPCBundle {
+        name: Name("Sewer Rat"),
+        ..Default::default()
+    });
+    world.spawn(NPCBundle {
+        name: Name("Cybermutant"),
+        ..Default::default()
+    });
+    let rat = world.spawn(NPCBundle {
+        name: Name("Sewer Rat".into()),
+        ..Default::default()
+    });
+
+    world.insert_one(rat, Burning(3)).unwrap();
+
+    level_up(world);
 }
 
 impl App {
     pub fn new() -> App {
         let mut world = World::new();
 
-        // world.spawn(CharacterBundle {
-        //     name: Name("Gunslinger"),
-        //     job: Job::Gunslinger { ammo: 12 },
-        //     ..Default::default()
-        // });
-        // world.spawn(CharacterBundle {
-        //     name: Name("Netrunner"),
-        //     job: Job::Netrunner { ram: 16, heat: 54 },
-        //     ..Default::default()
-        // });
-        world.spawn(CharacterBundle {
-            name: Name("Technopriest"),
-            job: Job::Technopriest { prayers: 4 },
-            ..Default::default()
-        });
-        world.spawn(CharacterBundle {
-            name: Name("Clairvoyant"),
-            job: Job::Clairvoyant { sun: 0, moon: 0 },
-            ..Default::default()
-        });
-        world.spawn(CharacterBundle {
-            name: Name("Nanovampire"),
-            job: Job::Nanovampire { battery: 100 },
-            ..Default::default()
-        });
-
-        world.spawn(NPCBundle {
-            name: Name("Sewer Rat"),
-            ..Default::default()
-        });
-        world.spawn(NPCBundle {
-            name: Name("Cybermutant"),
-            ..Default::default()
-        });
-        let rat = world.spawn(NPCBundle {
-            name: Name("Sewer Rat".into()),
-            ..Default::default()
-        });
-
-        let _ = world.insert_one(rat, Burning(6));
-
-        level_up(&mut world);
+        spawn_party(&mut world);
 
         let consumables = vec![
             Consumable {
@@ -423,15 +478,11 @@ impl App {
         let Some(skill) = self.skill else {
             return;
         };
-        let caster = self.world.entity(self.turn.unwrap()).unwrap();
         let targets = match self.selected_target {
             None => &self.targets,
             Some(selected) => &vec![self.targets[selected]],
         };
-        targets.iter().for_each(|&target| {
-            let target = self.world.entity(target).unwrap();
-            skill.apply(caster, target);
-        });
+        skill.apply(&mut self.world, self.turn.unwrap(), targets);
         self.check_dead();
     }
 
@@ -466,11 +517,13 @@ impl App {
             return;
         }
         {
-            let mut query = self
+            let query = self
                 .world
-                .query_one::<(&mut Initiative, &Stats)>(self.turn.unwrap())
-                .unwrap();
-            if let Some((Initiative(initiative), stats)) = query.get() {
+                .query_one::<(&mut Initiative, &Stats)>(self.turn.unwrap());
+            // Entity may have died during its turn so we can't unwrap the Result here.
+            if let Ok(mut query) = query
+                && let Some((Initiative(initiative), stats)) = query.get()
+            {
                 *initiative += 1. / stats.speed as f32;
             }
         }
@@ -482,8 +535,12 @@ impl App {
     }
 
     fn end_combat(&mut self) {
+        level_up(&mut self.world);
         self.game_state = GameState::Overworld;
         self.current_screen = CurrentScreen::Main;
+
+        // TODO: Until the overworld is implemented, just restart combat
+        self.start_combat(Advantage::Neutral);
     }
 
     fn start_targeting(&mut self, skill: &'static Skill) {
@@ -500,6 +557,8 @@ impl App {
         self.game_state = GameState::Combat;
         self.current_screen = CurrentScreen::Main;
         self.previous_screen = Vec::new();
+
+        spawn_enemies(&mut self.world);
 
         for (_, (stats, Initiative(initiative), hostile)) in
             self.world

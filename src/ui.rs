@@ -11,6 +11,7 @@ use ratatui::{
 
 use crate::app::{
     App, Burning, CurrentScreen, GameState, Health, Hostile, Job, Level, Name, Party, Stats,
+    StyledLine, StyledSpan, get_log,
 };
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
@@ -50,8 +51,8 @@ fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {
     match app.game_state {
         GameState::Combat => {
             let combat_chunks = Layout::horizontal(vec![
-                Constraint::Length(32),
                 Constraint::Fill(1),
+                Constraint::Fill(2),
                 Constraint::Length(20),
             ])
             .split(rect);
@@ -63,8 +64,30 @@ fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {
     }
 }
 
-fn draw_log(frame: &mut Frame, rect: Rect, app: &App) {
-    frame.render_widget(Block::default().title("Log").borders(Borders::ALL), rect);
+fn draw_log(frame: &mut Frame, rect: Rect, _app: &App) {
+    let log = get_log();
+    let lines = log
+        .iter()
+        .map(|StyledLine(spans, alignment)| {
+            Line::default()
+                .spans(
+                    spans
+                        .iter()
+                        .map(|StyledSpan(text, style)| Span::styled(text, *style)),
+                )
+                .alignment(*alignment)
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().title("Log").borders(Borders::ALL))
+            .scroll((
+                ((log.len() as u16).saturating_sub(rect.height.saturating_sub(2))),
+                0,
+            )),
+        rect,
+    );
 }
 
 struct EnemyInfo {
