@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use hecs::{Entity, EntityRef, Satisfies, World};
 use rand::prelude::*;
@@ -63,6 +63,45 @@ struct Damage {
     crit_multiplier: f32,
     hits: u8,
     randomized: bool,
+    modifier: Option<DamageModifier>,
+}
+
+impl Damage {
+    fn get_modified(&self, caster: EntityRef, target: EntityRef) -> Self {
+        if let Some(modifier) = self.modifier {
+            if modifier.test.0(caster, target) {
+                return Self {
+                    damage_type: modifier.damage_type.unwrap_or(self.damage_type),
+                    multiplier: modifier.multiplier.unwrap_or(self.multiplier),
+                    crit_multiplier: modifier.crit_multiplier.unwrap_or(self.crit_multiplier),
+                    ..self.clone()
+                };
+            }
+        }
+        self.clone()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TestFn(fn(caster: EntityRef, target: EntityRef) -> bool);
+
+#[derive(Clone, Copy)]
+struct DamageModifier {
+    test: TestFn,
+    damage_type: Option<DamageType>,
+    multiplier: Option<f32>,
+    crit_multiplier: Option<f32>,
+}
+
+impl Default for DamageModifier {
+    fn default() -> Self {
+        Self {
+            test: TestFn(is_burning),
+            damage_type: None,
+            multiplier: None,
+            crit_multiplier: None,
+        }
+    }
 }
 
 struct DamageBuilder {
@@ -108,6 +147,11 @@ impl DamageBuilder {
         self
     }
 
+    fn modifier(mut self, modifier: DamageModifier) -> Self {
+        self.damage.modifier = Some(modifier);
+        self
+    }
+
     fn build(self) -> Effect {
         Effect::Damage(self.damage, self.target)
     }
@@ -121,6 +165,7 @@ impl Default for Damage {
             crit_multiplier: 1.5,
             hits: 1,
             randomized: false,
+            modifier: None,
         }
     }
 }
@@ -132,7 +177,7 @@ enum Effect {
     Debuff(Debuff, EffectTarget),
     Gain(Job),
     Drain(Job),
-    Conditional(fn(EntityRef, EntityRef) -> bool, Vec<Effect>),
+    Conditional(TestFn, Vec<Effect>),
 }
 
 impl Effect {
@@ -158,7 +203,7 @@ pub struct Skill {
 
 #[derive(Clone)]
 struct SkillModifier {
-    test: fn(caster: EntityRef, target: EntityRef) -> bool,
+    test: TestFn,
     effects: Option<Vec<Effect>>,
     on_hit: Option<Vec<Effect>>,
     on_crit: Option<Vec<Effect>>,
@@ -168,7 +213,7 @@ struct SkillModifier {
 impl Default for SkillModifier {
     fn default() -> Self {
         Self {
-            test: is_burning,
+            test: TestFn(is_burning),
             effects: None,
             on_hit: None,
             on_crit: None,
@@ -181,7 +226,7 @@ impl Skill {
     fn get_modified(&self, caster: EntityRef) -> Skill {
         if let Some(modifier) = &self.modifier {
             // Test functions take both caster and target for reusability.
-            if (modifier.test)(caster, caster) {
+            if modifier.test.0(caster, caster) {
                 return Skill {
                     modifier: None,
                     effects: modifier.effects.as_ref().unwrap_or(&self.effects).clone(),
@@ -277,6 +322,12 @@ impl Skill {
                         break;
                     };
 
+                    let effect_damage = {
+                        let caster_ref = world.entity(caster).expect("Caster not found");
+                        let target_ref = world.entity(target).expect("Target not found");
+                        effect_damage.get_modified(caster_ref, target_ref)
+                    };
+
                     let mut on_crit = false;
 
                     {
@@ -326,18 +377,19 @@ impl Skill {
                     }
 
                     if on_hit {
+                        let targets = vec![target];
                         for effect in self.on_hit.iter() {
-                            self.effect(&effect, world, caster, targets, false);
+                            self.effect(&effect, world, caster, &targets, false);
                         }
                         if on_crit {
                             for effect in self.on_crit.iter() {
-                                self.effect(&effect, world, caster, targets, false);
+                                self.effect(&effect, world, caster, &targets, false);
                             }
                         }
                     }
                 }
             }
-            Effect::Conditional(test, effects) => {
+            Effect::Conditional(TestFn(test), effects) => {
                 for target in targets.iter() {
                     let caster_ref = world.entity(caster).expect("Caster not found");
                     let target_ref = world.entity(*target).expect("Target not found");
@@ -374,10 +426,15 @@ fn is_burning(_caster: EntityRef, target: EntityRef) -> bool {
 pub static BASIC_ATTACK: LazyLock<Skill> = LazyLock::new(|| Skill {
     name: "Basic Attack",
     target: PrimaryTarget::Hostile,
-    on_hit: vec![Effect::Conditional(
-        is_burning,
-        vec![Effect::damage().build()],
-    )],
+    effects: vec![
+        Effect::damage()
+            .modifier(DamageModifier {
+                test: TestFn(is_burning),
+                multiplier: Some(2.),
+                ..Default::default()
+            })
+            .build(),
+    ],
     ..Default::default()
 });
 
@@ -387,6 +444,24 @@ pub static POTION: LazyLock<Skill> = LazyLock::new(|| Skill {
     effects: vec![
         Effect::damage_type(DamageType::Healing)
             .multiplier(0.5)
+            .build(),
+    ],
+    ..Default::default()
+});
+
+pub static STATIC_DISCHARGE: LazyLock<Skill> = LazyLock::new(|| Skill {
+    name: "Static Discharge",
+    target: PrimaryTarget::AllHostile,
+    effects: vec![
+        Effect::damage_type(DamageType::Electrical)
+            .hits(6)
+            .randomized()
+            .build(),
+    ],
+    on_crit: vec![
+        Effect::damage_type(DamageType::Electrical)
+            .randomized()
+            .target(EffectTarget::Hostile)
             .build(),
     ],
     ..Default::default()

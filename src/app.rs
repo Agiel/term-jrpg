@@ -415,6 +415,7 @@ impl App {
                             let next_screen = self.action_list_items[selected].action;
                             if matches!(next_screen, CurrentScreen::Target) {
                                 self.start_targeting(&skills::BASIC_ATTACK);
+                                // self.start_targeting(&skills::STATIC_DISCHARGE);
                             } else {
                                 self.previous_screen.push(self.current_screen);
                                 self.current_screen = next_screen;
