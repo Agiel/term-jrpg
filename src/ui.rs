@@ -295,22 +295,22 @@ fn draw_party(frame: &mut Frame, rect: Rect, app: &App) {
                 frame.render_widget(
                     Paragraph::new(match job {
                         Job::Gunslinger { ammo } => {
-                            Line::styled(format!("⁍ {}", ammo), Color::DarkGray)
+                            Line::from(vec![format!("⁍ {}", ammo).dark_gray()])
                         }
                         Job::Netrunner { ram, heat } => Line::from(vec![
-                            Span::styled(format!("{}GB", ram), Color::Blue),
-                            Span::styled(format!("  {}ºC", heat), Color::LightRed),
+                            format!("{}GB", ram).blue(),
+                            format!("  {}ºC", heat).light_red(),
                         ]),
                         Job::Technopriest { prayers } => {
-                            Line::styled(format!("✠ {}", prayers), Color::LightMagenta)
+                            Line::from(format!("✠ {}", prayers)).light_green()
                         }
                         Job::Clairvoyant { sun, moon } => Line::from(vec![
-                            Span::styled(format!("☀ {}", sun), Color::Yellow),
-                            Span::styled(format!("  ☽︎ {}", moon), Color::Magenta),
+                            format!("☀ {}", sun).yellow(),
+                            format!("  ☽︎ {}", moon).magenta(),
                         ]),
                         Job::Nanovampire { battery } => {
                             // TODO: Find less risky character? This one probably won't always fill two cells.
-                            Line::styled(format!("⚡{}%", battery), Color::LightYellow)
+                            Line::from(vec![format!("⚡{}%", battery).light_blue()])
                         }
                         Job::None => Line::raw(""),
                     }),
@@ -371,13 +371,11 @@ fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
     let current_navigation_text = vec![
         // The first half of the text
         match app.current_screen {
-            CurrentScreen::Main => Span::styled("Select Action", Style::default().fg(Color::Green)),
-            CurrentScreen::Target => {
-                Span::styled("Select Target", Style::default().fg(Color::Green))
-            }
-            CurrentScreen::Skill => Span::styled("Select Skill", Style::default().fg(Color::Green)),
-            CurrentScreen::Item => Span::styled("Select Item", Style::default().fg(Color::Green)),
-            CurrentScreen::Exiting => Span::styled("Exiting", Style::default().fg(Color::LightRed)),
+            CurrentScreen::Main => "Select Action".green(),
+            CurrentScreen::Target => "Select Target".green(),
+            CurrentScreen::Skill => "Select Skill".green(),
+            CurrentScreen::Item => "Select Item".green(),
+            CurrentScreen::Exiting => "Exiting".light_red(),
         }
         .to_owned(),
     ];
@@ -387,23 +385,11 @@ fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
 
     let current_keys_hint = {
         match app.current_screen {
-            CurrentScreen::Main => Span::styled(
-                "(q) to quit / (↓↑) to select action",
-                Style::default().fg(Color::Red),
-            ),
-            CurrentScreen::Skill => Span::styled(
-                "(esc) to cancel / (↓↑) to select skill",
-                Style::default().fg(Color::Red),
-            ),
-            CurrentScreen::Item => Span::styled(
-                "(esc) to cancel / (↓↑) to select item",
-                Style::default().fg(Color::Red),
-            ),
-            CurrentScreen::Target => Span::styled(
-                "(esc) to cancel / (←→) to select target",
-                Style::default().fg(Color::Red),
-            ),
-            CurrentScreen::Exiting => Span::styled("(q) to quit", Style::default().fg(Color::Red)),
+            CurrentScreen::Main => "(q) to quit / (↓↑) to select action".red(),
+            CurrentScreen::Skill => "(esc) to cancel / (↓↑) to select skill".red(),
+            CurrentScreen::Item => "(esc) to cancel / (↓↑) to select item".red(),
+            CurrentScreen::Target => "(esc) to cancel / (←→) to select target".red(),
+            CurrentScreen::Exiting => "(q) to quit".red(),
         }
     };
 

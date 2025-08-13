@@ -1,4 +1,7 @@
-use std::sync::{LazyLock, Mutex};
+use std::{
+    fmt::Display,
+    sync::{LazyLock, Mutex},
+};
 
 use hecs::{Entity, EntityRef, Satisfies, World};
 use rand::prelude::*;
@@ -6,7 +9,7 @@ use ratatui::style::{Color, Style, Stylize};
 
 use super::{Burning, Health, Hostile, Job, Name, Party, Stats, StyledLine, StyledSpan, log_write};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum DamageType {
     Physical,
     Healing,
@@ -16,6 +19,27 @@ pub enum DamageType {
     Electrical,
     Dark,
     Light,
+}
+
+impl Display for DamageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl DamageType {
+    fn colored(&self) -> Style {
+        match self {
+            DamageType::Physical => Style::new().dark_gray(),
+            DamageType::Healing => Style::new().light_green(),
+            DamageType::Fire => Style::new().light_red(),
+            DamageType::Ice => Style::new().light_blue(),
+            DamageType::Toxic => Style::new().light_magenta(),
+            DamageType::Electrical => Style::new().light_cyan(),
+            DamageType::Dark => Style::new().magenta(),
+            DamageType::Light => Style::new().light_yellow(),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -371,6 +395,12 @@ impl Skill {
                                 log_line
                                     .push(StyledSpan::styled(" critical", Style::default().bold()));
                             }
+                            // if !matches!(effect_damage.damage_type, DamageType::Physical) {
+                            log_line.push(StyledSpan::styled(
+                                &format!(" {}", effect_damage.damage_type),
+                                effect_damage.damage_type.colored(),
+                            ));
+                            // }
                             log_line.push(StyledSpan::new(" damage"));
                             log_write(StyledLine::new(log_line).right_aligned());
                         }
