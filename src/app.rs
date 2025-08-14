@@ -8,53 +8,44 @@ use hecs::{Entity, Satisfies, With, World};
 use hecs_macros::Bundle;
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
-    layout::Alignment,
-    style::Style,
+    text::{Line, Span},
     widgets::{ListState, TableState},
 };
 use skills::Skill;
 
 mod skills;
 
-#[derive(Clone)]
-pub struct StyledSpan(pub String, pub Style);
-
-impl StyledSpan {
-    fn new(text: &str) -> Self {
-        Self(text.into(), Style::default())
-    }
-
-    fn styled(text: &str, style: Style) -> Self {
-        Self(text.into(), style)
-    }
+pub struct Log<'a> {
+    lines: VecDeque<Line<'a>>,
 }
+pub static LOG: LazyLock<Mutex<Log>> = LazyLock::new(|| {
+    Mutex::new(Log {
+        lines: VecDeque::with_capacity(100),
+    })
+});
 
-#[derive(Clone)]
-pub struct StyledLine(pub Vec<StyledSpan>, pub Alignment);
-
-impl StyledLine {
-    fn new(spans: Vec<StyledSpan>) -> Self {
-        Self(spans, Alignment::Left)
+impl<'a> Log<'a> {
+    pub fn write<'b>(&mut self, line: Line<'b>) {
+        while self.lines.len() >= 100 {
+            self.lines.pop_front();
+        }
+        // Deep clone to take ownership of the string
+        let style = line.style;
+        let alignment = line.alignment;
+        let spans = line
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style))
+            .collect::<Vec<_>>();
+        self.lines.push_back(Line {
+            style,
+            alignment,
+            spans,
+        });
     }
 
-    fn right_aligned(self) -> Self {
-        Self(self.0, Alignment::Right)
+    pub fn get_lines(&self) -> Vec<Line> {
+        self.lines.iter().map(|s| s.clone()).collect()
     }
-}
-
-static LOG: LazyLock<Mutex<VecDeque<StyledLine>>> =
-    LazyLock::new(|| Mutex::new(VecDeque::with_capacity(100)));
-
-pub fn log_write(line: StyledLine) {
-    let mut log = LOG.lock().unwrap();
-    while log.len() >= 100 {
-        log.pop_front();
-    }
-    log.push_back(line);
-}
-
-pub fn get_log() -> Vec<StyledLine> {
-    LOG.lock().unwrap().iter().map(|s| s.clone()).collect()
 }
 
 pub enum GameState {
@@ -69,6 +60,7 @@ pub enum CurrentScreen {
     Skill,
     Target,
     Item,
+    Enemy,
     Exiting,
 }
 
@@ -465,6 +457,11 @@ impl App {
                     Message::Select => {
                         self.apply_skill();
                         self.finish_turn();
+                        // if let Some(turn) = self.turn
+                        //     && self.world.satisfies::<&Hostile>(turn).unwrap()
+                        // {
+                        //     self.current_screen = CurrentScreen::Enemy;
+                        // }
                     }
                     _ => (),
                 },

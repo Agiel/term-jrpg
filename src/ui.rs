@@ -10,8 +10,7 @@ use ratatui::{
 };
 
 use crate::app::{
-    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, Level, Name, Party, Stats,
-    StyledLine, StyledSpan, get_log,
+    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, LOG, Level, Name, Party, Stats,
 };
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
@@ -65,27 +64,14 @@ fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {
 }
 
 fn draw_log(frame: &mut Frame, rect: Rect, _app: &App) {
-    let log = get_log();
-    let lines = log
-        .iter()
-        .map(|StyledLine(spans, alignment)| {
-            Line::default()
-                .spans(
-                    spans
-                        .iter()
-                        .map(|StyledSpan(text, style)| Span::styled(text, *style)),
-                )
-                .alignment(*alignment)
-        })
-        .collect::<Vec<_>>();
+    let log = LOG.lock().unwrap();
+    let log_lines = log.get_lines();
+    let num_lines = log_lines.len() as u16;
     frame.render_widget(
-        Paragraph::new(lines)
+        Paragraph::new(log_lines)
             .wrap(Wrap { trim: true })
             .block(Block::default().title("Log").borders(Borders::ALL))
-            .scroll((
-                ((log.len() as u16).saturating_sub(rect.height.saturating_sub(2))),
-                0,
-            )),
+            .scroll((num_lines.saturating_sub(rect.height.saturating_sub(2)), 0)),
         rect,
     );
 }
@@ -368,17 +354,14 @@ fn draw_items(frame: &mut Frame, rect: Rect, app: &mut App) {
 }
 
 fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
-    let current_navigation_text = vec![
-        // The first half of the text
-        match app.current_screen {
-            CurrentScreen::Main => "Select Action".green(),
-            CurrentScreen::Target => "Select Target".green(),
-            CurrentScreen::Skill => "Select Skill".green(),
-            CurrentScreen::Item => "Select Item".green(),
-            CurrentScreen::Exiting => "Exiting".light_red(),
-        }
-        .to_owned(),
-    ];
+    let current_navigation_text = match app.current_screen {
+        CurrentScreen::Main => "Select Action".green(),
+        CurrentScreen::Target => "Select Target".green(),
+        CurrentScreen::Skill => "Select Skill".green(),
+        CurrentScreen::Item => "Select Item".green(),
+        CurrentScreen::Enemy => "Enemy's Turn".blue(),
+        CurrentScreen::Exiting => "Exiting".light_red(),
+    };
 
     let mode_footer = Paragraph::new(Line::from(current_navigation_text))
         .block(Block::default().borders(Borders::ALL));
@@ -389,6 +372,7 @@ fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
             CurrentScreen::Skill => "(esc) to cancel / (↓↑) to select skill".red(),
             CurrentScreen::Item => "(esc) to cancel / (↓↑) to select item".red(),
             CurrentScreen::Target => "(esc) to cancel / (←→) to select target".red(),
+            CurrentScreen::Enemy => "Wait for enemy to finish turn".red(),
             CurrentScreen::Exiting => "(q) to quit".red(),
         }
     };

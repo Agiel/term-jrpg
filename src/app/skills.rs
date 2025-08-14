@@ -1,13 +1,13 @@
-use std::{
-    fmt::Display,
-    sync::{LazyLock, Mutex},
-};
+use std::{fmt::Display, sync::LazyLock};
 
 use hecs::{Entity, EntityRef, Satisfies, World};
 use rand::prelude::*;
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::{
+    style::Stylize,
+    text::{Line, Span},
+};
 
-use super::{Burning, Health, Hostile, Job, Name, Party, Stats, StyledLine, StyledSpan, log_write};
+use super::{Burning, Health, Hostile, Job, LOG, Name, Party, Stats};
 
 #[derive(Clone, Copy, Debug)]
 pub enum DamageType {
@@ -27,17 +27,17 @@ impl Display for DamageType {
     }
 }
 
-impl DamageType {
-    fn colored(&self) -> Style {
+impl<'a> Into<Span<'a>> for DamageType {
+    fn into(self) -> Span<'a> {
         match self {
-            DamageType::Physical => Style::new().dark_gray(),
-            DamageType::Healing => Style::new().light_green(),
-            DamageType::Fire => Style::new().light_red(),
-            DamageType::Ice => Style::new().light_blue(),
-            DamageType::Toxic => Style::new().light_magenta(),
-            DamageType::Electrical => Style::new().light_cyan(),
-            DamageType::Dark => Style::new().magenta(),
-            DamageType::Light => Style::new().light_yellow(),
+            DamageType::Physical => self.to_string().dark_gray(),
+            DamageType::Healing => self.to_string().light_green(),
+            DamageType::Fire => self.to_string().light_red(),
+            DamageType::Ice => self.to_string().light_blue(),
+            DamageType::Toxic => self.to_string().light_magenta(),
+            DamageType::Electrical => self.to_string().light_cyan(),
+            DamageType::Dark => self.to_string().magenta(),
+            DamageType::Light => self.to_string().light_yellow(),
         }
     }
 }
@@ -287,13 +287,17 @@ impl Skill {
             let mut caster_query = world
                 .query_one::<(&Name, Satisfies<&Hostile>)>(caster)
                 .unwrap();
-            let (Name(caster_name), hostile) = caster_query.get().unwrap();
+            let (&Name(caster_name), hostile) = caster_query.get().unwrap();
 
-            let color = if hostile { Color::Red } else { Color::Green };
-            log_write(StyledLine::new(vec![
-                StyledSpan::styled(caster_name, Style::new().fg(color)),
-                StyledSpan::new(" uses "),
-                StyledSpan::styled(self.name, Style::new().blue()),
+            let mut log = LOG.lock().unwrap();
+            log.write(Line::from(vec![
+                if hostile {
+                    caster_name.red()
+                } else {
+                    caster_name.green()
+                },
+                " uses ".into(),
+                self.name.blue(),
             ]));
         }
         for effect in self.effects.iter() {
@@ -382,27 +386,26 @@ impl Skill {
 
                             *target_health = target_health.saturating_sub(damage as u32);
 
-                            let color = if hostile { Color::Red } else { Color::Green };
-                            let mut log_line = vec![
-                                StyledSpan::styled(target_name, Style::new().fg(color)),
-                                StyledSpan::new(" takes "),
-                            ];
-                            log_line.push(StyledSpan::styled(
-                                &format!("{damage}"),
-                                Style::default().bold(),
-                            ));
-                            if on_crit {
-                                log_line
-                                    .push(StyledSpan::styled(" critical", Style::default().bold()));
-                            }
-                            // if !matches!(effect_damage.damage_type, DamageType::Physical) {
-                            log_line.push(StyledSpan::styled(
-                                &format!(" {}", effect_damage.damage_type),
-                                effect_damage.damage_type.colored(),
-                            ));
-                            // }
-                            log_line.push(StyledSpan::new(" damage"));
-                            log_write(StyledLine::new(log_line).right_aligned());
+                            let mut log = LOG.lock().unwrap();
+                            log.write(
+                                Line::from(vec![
+                                    if hostile {
+                                        target_name.red()
+                                    } else {
+                                        target_name.green()
+                                    },
+                                    " takes ".into(),
+                                    format!("{damage}").bold(),
+                                    if on_crit {
+                                        " critical ".bold()
+                                    } else {
+                                        " ".into()
+                                    },
+                                    effect_damage.damage_type.into(),
+                                    " damage".into(),
+                                ])
+                                .right_aligned(),
+                            );
                         }
                     }
 
