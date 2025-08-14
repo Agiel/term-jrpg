@@ -27,17 +27,17 @@ impl Display for DamageType {
     }
 }
 
-impl<'a> Into<Span<'a>> for DamageType {
-    fn into(self) -> Span<'a> {
-        match self {
-            DamageType::Physical => self.to_string().dark_gray(),
-            DamageType::Healing => self.to_string().light_green(),
-            DamageType::Fire => self.to_string().light_red(),
-            DamageType::Ice => self.to_string().light_blue(),
-            DamageType::Toxic => self.to_string().light_magenta(),
-            DamageType::Electrical => self.to_string().light_cyan(),
-            DamageType::Dark => self.to_string().magenta(),
-            DamageType::Light => self.to_string().light_yellow(),
+impl<'a> From<DamageType> for Span<'a> {
+    fn from(value: DamageType) -> Self {
+        match value {
+            DamageType::Physical => value.to_string().dark_gray(),
+            DamageType::Healing => value.to_string().light_green(),
+            DamageType::Fire => value.to_string().light_red(),
+            DamageType::Ice => value.to_string().light_blue(),
+            DamageType::Toxic => value.to_string().light_magenta(),
+            DamageType::Electrical => value.to_string().light_cyan(),
+            DamageType::Dark => value.to_string().magenta(),
+            DamageType::Light => value.to_string().light_yellow(),
         }
     }
 }
@@ -374,6 +374,21 @@ impl Skill {
                             let damage = target_stats.max_health as f32 * effect_damage.multiplier;
                             *target_health =
                                 (*target_health + damage as u32).min(target_stats.max_health);
+
+                            let mut log = LOG.lock().unwrap();
+                            log.write(
+                                Line::from(vec![
+                                    if hostile {
+                                        target_name.red()
+                                    } else {
+                                        target_name.green()
+                                    },
+                                    " gains ".into(),
+                                    format!("{damage} ").bold(),
+                                    Span::from(effect_damage.damage_type).content("Health"),
+                                ])
+                                .right_aligned(),
+                            );
                         } else {
                             let mut damage = caster_stats.attack as f32;
                             damage *= (caster_stats.attack as f32 / target_stats.defense as f32)

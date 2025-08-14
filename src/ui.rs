@@ -6,7 +6,9 @@ use ratatui::{
     layout::{Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Clear, Gauge, List, Paragraph, Row, Table, Wrap},
+    widgets::{
+        Block, Borders, Cell, Clear, Gauge, List, Paragraph, Row, Table, Wrap, block::Title,
+    },
 };
 
 use crate::app::{
@@ -50,8 +52,8 @@ fn draw_field(frame: &mut Frame, rect: Rect, app: &App) {
     match app.game_state {
         GameState::Combat => {
             let combat_chunks = Layout::horizontal(vec![
+                Constraint::Length(48),
                 Constraint::Fill(1),
-                Constraint::Fill(2),
                 Constraint::Length(20),
             ])
             .split(rect);
@@ -69,7 +71,7 @@ fn draw_log(frame: &mut Frame, rect: Rect, _app: &App) {
     let num_lines = log_lines.len() as u16;
     frame.render_widget(
         Paragraph::new(log_lines)
-            .wrap(Wrap { trim: true })
+            // .wrap(Wrap { trim: true }) // TODO: This makes it hard to scroll to the bottom
             .block(Block::default().title("Log").borders(Borders::ALL))
             .scroll((num_lines.saturating_sub(rect.height.saturating_sub(2)), 0)),
         rect,
@@ -83,6 +85,7 @@ struct EnemyInfo {
     max_health: u32,
     status: String,
     target: bool,
+    turn: bool,
 }
 
 fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
@@ -113,6 +116,7 @@ fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
                     max_health: stats.max_health,
                     status,
                     target,
+                    turn: app.turn.is_some_and(|t| t == entity),
                 }
             },
         )
@@ -133,7 +137,13 @@ fn draw_enemies(frame: &mut Frame, rect: Rect, app: &App) {
 
         frame.render_widget(
             Block::default()
-                .title(format!("{} Lv.{}", info.name, info.level))
+                .title(
+                    Line::from(format!("{} Lv.{}", info.name, info.level)).style(if info.turn {
+                        Style::new().bold()
+                    } else {
+                        Style::default()
+                    }),
+                )
                 .borders(Borders::ALL),
             centered[1],
         );
@@ -207,17 +217,22 @@ fn draw_actions(frame: &mut Frame, rect: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .style(Style::default());
 
-    let items = app
-        .action_list_items
-        .iter()
-        .map(|i| i.text)
-        .collect::<Vec<_>>();
-    let action_list = List::default()
-        .items(items)
-        .highlight_style(Style::new().reversed())
-        .block(action_block);
+    if matches!(app.current_screen, CurrentScreen::Enemy) {
+        // Draw empty box during enemy's turn
+        frame.render_widget(action_block, rect);
+    } else {
+        let items = app
+            .action_list_items
+            .iter()
+            .map(|i| i.text)
+            .collect::<Vec<_>>();
+        let action_list = List::default()
+            .items(items)
+            .highlight_style(Style::new().reversed())
+            .block(action_block);
 
-    frame.render_stateful_widget(action_list, rect, &mut app.action_list_state);
+        frame.render_stateful_widget(action_list, rect, &mut app.action_list_state);
+    }
 }
 
 fn draw_party(frame: &mut Frame, rect: Rect, app: &App) {

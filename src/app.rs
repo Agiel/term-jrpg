@@ -1,7 +1,10 @@
+use rand::prelude::*;
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, VecDeque},
     sync::{LazyLock, Mutex},
+    thread::sleep,
+    time::Duration,
 };
 
 use hecs::{Entity, Satisfies, With, World};
@@ -221,6 +224,7 @@ pub enum Message {
     Select,
     Cancel,
     Quit,
+    Think,
 }
 
 #[derive(Bundle, Default)]
@@ -457,11 +461,26 @@ impl App {
                     Message::Select => {
                         self.apply_skill();
                         self.finish_turn();
-                        // if let Some(turn) = self.turn
-                        //     && self.world.satisfies::<&Hostile>(turn).unwrap()
-                        // {
-                        //     self.current_screen = CurrentScreen::Enemy;
-                        // }
+                        if let Some(turn) = self.turn
+                            && self.world.satisfies::<&Hostile>(turn).unwrap()
+                        {
+                            self.current_screen = CurrentScreen::Enemy;
+                            return Some(Message::Think);
+                        }
+                    }
+                    _ => (),
+                },
+                CurrentScreen::Enemy => match message {
+                    Message::Think => {
+                        sleep(Duration::from_secs(1));
+                        self.think();
+                        self.finish_turn();
+                        if let Some(turn) = self.turn
+                            && self.world.satisfies::<&Hostile>(turn).unwrap()
+                        {
+                            self.current_screen = CurrentScreen::Enemy;
+                            return Some(Message::Think);
+                        }
                     }
                     _ => (),
                 },
@@ -470,6 +489,19 @@ impl App {
             _ => (),
         }
         None
+    }
+
+    fn think(&mut self) {
+        self.skill = Some(&skills::BASIC_ATTACK);
+        self.targets = self
+            .world
+            .query::<&Party>()
+            .iter()
+            .map(|(e, _)| e)
+            .collect::<Vec<_>>();
+        let mut rng = rand::rng();
+        self.selected_target = Some(rng.random_range(..self.targets.len()));
+        self.apply_skill();
     }
 
     fn apply_skill(&mut self) {
