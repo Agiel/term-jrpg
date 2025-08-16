@@ -1,3 +1,4 @@
+use color_eyre::owo_colors::OwoColorize;
 use rand::prelude::*;
 use std::{
     cmp::Ordering,
@@ -88,6 +89,7 @@ pub struct App {
     pub next_up: Option<NextUp>,
     pub action_list_items: &'static [ActionListItem],
     pub action_list_state: ListState,
+    pub skill_list_state: ListState,
     pub consumable_list_state: TableState,
     pub targets: Vec<Entity>,
     pub selected_target: Option<usize>,
@@ -138,6 +140,9 @@ pub enum Job {
         battery: u8,
     },
 }
+
+#[derive(Default)]
+pub struct Skills(pub Vec<&'static Skill>);
 
 // Misc
 #[derive(Default)]
@@ -231,6 +236,7 @@ pub enum Message {
 struct CharacterBundle {
     name: Name,
     job: Job,
+    skills: Skills,
     health: Health,
     level: Level,
     xp: Xp,
@@ -243,6 +249,7 @@ struct CharacterBundle {
 struct NPCBundle {
     name: Name,
     health: Health,
+    skills: Skills,
     level: Level,
     xp: Xp,
     stats: Stats,
@@ -268,11 +275,16 @@ fn level_up(world: &mut World) {
 }
 
 fn spawn_party(world: &mut World) {
-    // world.spawn(CharacterBundle {
-    //     name: Name("Gunslinger"),
-    //     job: Job::Gunslinger { ammo: 12 },
-    //     ..Default::default()
-    // });
+    world.spawn(CharacterBundle {
+        name: Name("Gunslinger"),
+        job: Job::Gunslinger { ammo: 6 },
+        skills: Skills(vec![
+            &skills::gunslinger::RELOAD,
+            &skills::gunslinger::TACTICAL_RELOAD,
+            &skills::gunslinger::DOUBLE_TAP,
+        ]),
+        ..Default::default()
+    });
     // world.spawn(CharacterBundle {
     //     name: Name("Netrunner"),
     //     job: Job::Netrunner { ram: 16, heat: 54 },
@@ -283,11 +295,11 @@ fn spawn_party(world: &mut World) {
         job: Job::Technopriest { prayers: 4 },
         ..Default::default()
     });
-    world.spawn(CharacterBundle {
-        name: Name("Clairvoyant"),
-        job: Job::Clairvoyant { sun: 0, moon: 0 },
-        ..Default::default()
-    });
+    // world.spawn(CharacterBundle {
+    //     name: Name("Clairvoyant"),
+    //     job: Job::Clairvoyant { sun: 0, moon: 0 },
+    //     ..Default::default()
+    // });
     world.spawn(CharacterBundle {
         name: Name("Nanovampire"),
         job: Job::Nanovampire { battery: 100 },
@@ -326,17 +338,17 @@ impl App {
             Consumable {
                 name: "Potion",
                 amount: 15,
-                skill: &skills::POTION,
+                skill: &skills::common::POTION,
             },
             Consumable {
                 name: "Cleanse",
                 amount: 3,
-                skill: &skills::CLEANSE,
+                skill: &skills::common::CLEANSE,
             },
             Consumable {
                 name: "Revive",
                 amount: 3,
-                skill: &skills::REVIVE,
+                skill: &skills::common::REVIVE,
             },
         ];
 
@@ -349,7 +361,8 @@ impl App {
             turn: None,
             next_up: None,
             action_list_items: &[],
-            action_list_state: Default::default(),
+            action_list_state: ListState::default().with_selected(Some(0)),
+            skill_list_state: ListState::default().with_selected(Some(0)),
             consumable_list_state: TableState::default().with_selected(0),
             targets: Vec::new(),
             selected_target: None,
@@ -410,7 +423,7 @@ impl App {
                         if let Some(selected) = self.action_list_state.selected() {
                             let next_screen = self.action_list_items[selected].action;
                             if matches!(next_screen, CurrentScreen::Target) {
-                                self.start_targeting(&skills::BASIC_ATTACK);
+                                self.start_targeting(&skills::common::BASIC_ATTACK);
                                 // self.start_targeting(&skills::STATIC_DISCHARGE);
                             } else {
                                 self.previous_screen.push(self.current_screen);
@@ -420,9 +433,39 @@ impl App {
                     }
                     _ => (),
                 },
-                CurrentScreen::Skill => match message {
-                    _ => (),
-                },
+                CurrentScreen::Skill => {
+                    let Skills(skills) = self
+                        .world
+                        .query_one_mut::<&Skills>(
+                            self.turn
+                                .expect("Shouldn't be here without it being someone's turn"),
+                        )
+                        .expect("Entity need skills to cast them");
+
+                    match message {
+                        Message::Up => {
+                            if self.skill_list_state.selected() == Some(0) {
+                                self.skill_list_state.select_last();
+                            } else {
+                                self.skill_list_state.select_previous();
+                            }
+                        }
+                        Message::Down => {
+                            if self.skill_list_state.selected() == Some(skills.len() - 1) {
+                                self.skill_list_state.select_first();
+                            } else {
+                                self.skill_list_state.select_next();
+                            }
+                        }
+                        Message::Select => {
+                            if let Some(selected) = self.skill_list_state.selected() {
+                                let skill = skills[selected];
+                                self.start_targeting(skill);
+                            }
+                        }
+                        _ => (),
+                    }
+                }
                 CurrentScreen::Item => match message {
                     Message::Up => {
                         if self.consumable_list_state.selected() == Some(0) {
@@ -460,6 +503,9 @@ impl App {
                     }
                     Message::Select => {
                         self.apply_skill();
+                        if matches!(self.previous_screen.last(), Some(CurrentScreen::Item)) {
+                            self.drain_item();
+                        }
                         self.finish_turn();
                         if let Some(turn) = self.turn
                             && self.world.satisfies::<&Hostile>(turn).unwrap()
@@ -492,7 +538,7 @@ impl App {
     }
 
     fn think(&mut self) {
-        self.skill = Some(&skills::BASIC_ATTACK);
+        self.skill = Some(&skills::common::BASIC_ATTACK);
         self.targets = self
             .world
             .query::<&Party>()
@@ -516,6 +562,16 @@ impl App {
         self.check_dead();
     }
 
+    fn drain_item(&mut self) {
+        if let Some(selected) = self.consumable_list_state.selected() {
+            let item = &mut self.consumables[selected];
+            item.amount = item.amount.saturating_sub(1);
+            if item.amount == 0 {
+                self.consumables.remove(selected);
+            }
+        }
+    }
+
     fn check_dead(&mut self) {
         let dead = self
             .world
@@ -531,14 +587,6 @@ impl App {
             }
         });
         self.refresh_next_up();
-        if let Some(skill) = self.skill
-            && let Some(selected) = self.selected_target
-        {
-            let (targets, _) = skill.get_targets(&self.world);
-            self.targets = targets;
-            self.selected_target = (self.targets.len() > 0)
-                .then_some(selected.clamp(0, self.targets.len().saturating_sub(1)));
-        }
     }
 
     fn finish_turn(&mut self) {
@@ -562,6 +610,7 @@ impl App {
             self.turn = next_up.0.peek().map(|i| i.entity);
         }
         self.current_screen = CurrentScreen::Main;
+        self.previous_screen.clear();
     }
 
     fn end_combat(&mut self) {
@@ -577,7 +626,11 @@ impl App {
         self.previous_screen.push(self.current_screen);
         self.current_screen = CurrentScreen::Target;
 
-        let (targets, many) = skill.get_targets(&self.world);
+        let (targets, many) = skill.get_targets(
+            &self.world,
+            self.turn
+                .expect("Can't get here unless it's someone's turn"),
+        );
         self.targets = targets;
         self.selected_target = (!many).then_some(0);
         self.skill = Some(skill);
@@ -586,7 +639,7 @@ impl App {
     pub fn start_combat(&mut self, advantage: Advantage) {
         self.game_state = GameState::Combat;
         self.current_screen = CurrentScreen::Main;
-        self.previous_screen = Vec::new();
+        self.previous_screen.clear();
 
         spawn_enemies(&mut self.world);
 

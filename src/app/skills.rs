@@ -1,4 +1,4 @@
-use std::{fmt::Display, sync::LazyLock};
+use std::fmt::Display;
 
 use hecs::{Entity, EntityRef, Satisfies, World};
 use rand::prelude::*;
@@ -8,6 +8,10 @@ use ratatui::{
 };
 
 use super::{Burning, Health, Hostile, Job, LOG, Name, Party, Stats};
+
+pub mod common;
+pub mod gunslinger;
+pub mod nanovampire;
 
 #[derive(Clone, Copy, Debug)]
 pub enum DamageType {
@@ -57,12 +61,14 @@ pub enum Debuff {
 #[derive(Clone, Copy)]
 pub enum Buff {
     Haste { duration: u8 },
+    Shell { duration: u8 },
     Revived,
     Cleansed,
 }
 
 #[derive(Clone, Copy)]
 enum PrimaryTarget {
+    Caster,
     Hostile,
     AllHostile,
     Friendly,
@@ -246,6 +252,115 @@ impl Default for SkillModifier {
     }
 }
 
+fn drain_resource(world: &mut World, entity: Entity, amount: Job) {
+    if matches!(amount, Job::None) {
+        return;
+    }
+    let job = world
+        .query_one_mut::<&mut Job>(entity)
+        .expect("Entity must have a job component");
+
+    match job {
+        Job::Gunslinger { ammo } => {
+            if let Job::Gunslinger { ammo: ammo_drain } = amount {
+                *ammo = ammo.saturating_sub(ammo_drain);
+            }
+        }
+        Job::Netrunner { ram, heat } => {
+            if let Job::Netrunner {
+                ram: ram_drain,
+                heat: heat_drain,
+            } = amount
+            {
+                *ram = ram.saturating_sub(ram_drain);
+                *heat = heat.saturating_sub(heat_drain);
+            }
+        }
+        Job::Technopriest { prayers } => {
+            if let Job::Technopriest {
+                prayers: prayers_drain,
+            } = amount
+            {
+                *prayers = prayers.saturating_sub(prayers_drain);
+            }
+        }
+        Job::Clairvoyant { sun, moon } => {
+            if let Job::Clairvoyant {
+                sun: sun_drain,
+                moon: moon_drain,
+            } = amount
+            {
+                *sun = sun.saturating_sub(sun_drain);
+                *moon = moon.saturating_sub(moon_drain);
+            }
+        }
+        Job::Nanovampire { battery } => {
+            if let Job::Nanovampire {
+                battery: battery_drain,
+            } = amount
+            {
+                *battery = battery.saturating_sub(battery_drain);
+            }
+        }
+        Job::None => (),
+    }
+}
+
+fn gain_resource(world: &mut World, entity: Entity, amount: Job) {
+    if matches!(amount, Job::None) {
+        return;
+    }
+    // TODO: Fetch max amounts from somewhere
+    let job = world
+        .query_one_mut::<&mut Job>(entity)
+        .expect("Entity must have a job component");
+
+    match job {
+        Job::Gunslinger { ammo } => {
+            if let Job::Gunslinger { ammo: ammo_gain } = amount {
+                *ammo = ammo.saturating_add(ammo_gain).min(6);
+            }
+        }
+        Job::Netrunner { ram, heat } => {
+            if let Job::Netrunner {
+                ram: ram_gain,
+                heat: heat_gain,
+            } = amount
+            {
+                *ram = ram.saturating_add(ram_gain);
+                *heat = heat.saturating_add(heat_gain);
+            }
+        }
+        Job::Technopriest { prayers } => {
+            if let Job::Technopriest {
+                prayers: prayers_gain,
+            } = amount
+            {
+                *prayers = prayers.saturating_add(prayers_gain);
+            }
+        }
+        Job::Clairvoyant { sun, moon } => {
+            if let Job::Clairvoyant {
+                sun: sun_gain,
+                moon: moon_gain,
+            } = amount
+            {
+                *sun = sun.saturating_add(sun_gain);
+                *moon = moon.saturating_add(moon_gain);
+            }
+        }
+        Job::Nanovampire { battery } => {
+            if let Job::Nanovampire {
+                battery: battery_gain,
+            } = amount
+            {
+                *battery = battery.saturating_add(battery_gain);
+            }
+        }
+        Job::None => (),
+    }
+}
+
 impl Skill {
     fn get_modified(&self, caster: EntityRef) -> Skill {
         if let Some(modifier) = &self.modifier {
@@ -264,7 +379,10 @@ impl Skill {
         self.clone()
     }
 
-    pub fn get_targets(&self, world: &World) -> (Vec<Entity>, bool) {
+    pub fn get_targets(&self, world: &World, caster: Entity) -> (Vec<Entity>, bool) {
+        if matches!(self.target, PrimaryTarget::Caster) {
+            return (vec![caster], false);
+        }
         (
             world
                 .query::<(Satisfies<&Party>, Satisfies<&Hostile>)>()
@@ -300,6 +418,7 @@ impl Skill {
                 self.name.blue(),
             ]));
         }
+        drain_resource(world, caster, self.cost);
         for effect in self.effects.iter() {
             self.effect(effect, world, caster, targets, true);
         }
@@ -448,6 +567,8 @@ impl Skill {
                     }
                 }
             }
+            Effect::Gain(amount) => gain_resource(world, caster, *amount),
+            Effect::Drain(amount) => drain_resource(world, caster, *amount),
             _ => (),
         }
     }
@@ -470,61 +591,3 @@ impl Default for Skill {
 fn is_burning(_caster: EntityRef, target: EntityRef) -> bool {
     target.satisfies::<&Burning>()
 }
-
-pub static BASIC_ATTACK: LazyLock<Skill> = LazyLock::new(|| Skill {
-    name: "Basic Attack",
-    target: PrimaryTarget::Hostile,
-    effects: vec![
-        Effect::damage()
-            .modifier(DamageModifier {
-                test: TestFn(is_burning),
-                multiplier: Some(2.),
-                ..Default::default()
-            })
-            .build(),
-    ],
-    ..Default::default()
-});
-
-pub static POTION: LazyLock<Skill> = LazyLock::new(|| Skill {
-    name: "Potion",
-    // target: PrimaryTarget::Friendly,
-    effects: vec![
-        Effect::damage_type(DamageType::Healing)
-            .multiplier(0.5)
-            .build(),
-    ],
-    ..Default::default()
-});
-
-pub static STATIC_DISCHARGE: LazyLock<Skill> = LazyLock::new(|| Skill {
-    name: "Static Discharge",
-    target: PrimaryTarget::AllHostile,
-    effects: vec![
-        Effect::damage_type(DamageType::Electrical)
-            .hits(6)
-            .randomized()
-            .build(),
-    ],
-    on_crit: vec![
-        Effect::damage_type(DamageType::Electrical)
-            .randomized()
-            .target(EffectTarget::Hostile)
-            .build(),
-    ],
-    ..Default::default()
-});
-
-pub static CLEANSE: LazyLock<Skill> = LazyLock::new(|| Skill {
-    name: "Cleanse",
-    target: PrimaryTarget::Friendly,
-    effects: vec![Effect::Buff(Buff::Cleansed, EffectTarget::Target)],
-    ..Default::default()
-});
-
-pub static REVIVE: LazyLock<Skill> = LazyLock::new(|| Skill {
-    name: "Revive",
-    target: PrimaryTarget::Friendly,
-    effects: vec![Effect::Buff(Buff::Revived, EffectTarget::Target)],
-    ..Default::default()
-});

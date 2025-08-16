@@ -12,7 +12,8 @@ use ratatui::{
 };
 
 use crate::app::{
-    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, LOG, Level, Name, Party, Stats,
+    App, Burning, CurrentScreen, GameState, Health, Hostile, Job, LOG, Level, Name, Party, Skills,
+    Stats,
 };
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
@@ -321,7 +322,7 @@ fn draw_party(frame: &mut Frame, rect: Rect, app: &App) {
         );
 }
 
-fn draw_skills(frame: &mut Frame, rect: Rect, app: &App) {
+fn draw_skills(frame: &mut Frame, rect: Rect, app: &mut App) {
     let rect = Layout::horizontal(vec![Constraint::Length(20)])
         .horizontal_margin(4)
         .split(
@@ -331,9 +332,24 @@ fn draw_skills(frame: &mut Frame, rect: Rect, app: &App) {
                 .split(frame.area())[0],
         )[0];
     frame.render_widget(Clear, rect);
-    frame.render_widget(
-        Block::default().title("Skills ↓↑").borders(Borders::ALL),
+
+    let mut skills_query = app
+        .world
+        .query_one::<&Skills>(
+            app.turn
+                .expect("Can't get here unless it's someone's turrn"),
+        )
+        .expect("Entity needs to exist in the world");
+    let Skills(skills) = skills_query.get().expect("Entity needs skills");
+    let items = skills.iter().map(|i| i.name).collect::<Vec<_>>();
+
+    frame.render_stateful_widget(
+        List::default()
+            .items(items)
+            .highlight_style(Style::new().reversed())
+            .block(Block::default().title("Skills ↓↑").borders(Borders::ALL)),
         rect,
+        &mut app.skill_list_state,
     );
 }
 
@@ -371,14 +387,22 @@ fn draw_items(frame: &mut Frame, rect: Rect, app: &mut App) {
 fn draw_footer(frame: &mut Frame, rect: Rect, app: &App) {
     let current_navigation_text = match app.current_screen {
         CurrentScreen::Main => "Select Action".green(),
-        CurrentScreen::Target => "Select Target".green(),
+        CurrentScreen::Target => "Select Target for ".green(),
         CurrentScreen::Skill => "Select Skill".green(),
         CurrentScreen::Item => "Select Item".green(),
         CurrentScreen::Enemy => "Enemy's Turn".blue(),
         CurrentScreen::Exiting => "Exiting".light_red(),
     };
 
-    let mode_footer = Paragraph::new(Line::from(current_navigation_text))
+    let secondary_text = if matches!(app.current_screen, CurrentScreen::Target)
+        && let Some(skill) = app.skill
+    {
+        skill.name.blue()
+    } else {
+        "".into()
+    };
+
+    let mode_footer = Paragraph::new(Line::from(vec![current_navigation_text, secondary_text]))
         .block(Block::default().borders(Borders::ALL));
 
     let current_keys_hint = {
